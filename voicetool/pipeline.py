@@ -1,4 +1,5 @@
 """Hotkey events in, pasted text out. Dictations are processed one at a time, in order."""
+import logging
 import queue
 import threading
 import time
@@ -8,6 +9,8 @@ from voicetool.cleanup import clean
 from voicetool.config import Config
 from voicetool.recorder import RecorderError, too_short
 from voicetool.win.paste import PasteResult
+
+log = logging.getLogger("voicetool")
 
 _NOTICES = {
     PasteResult.COPIED_FOCUS_MOVED: "Copied — focus moved, paste it with Ctrl+V",
@@ -83,6 +86,7 @@ class Pipeline:
             try:
                 self._process(audio, target)
             except Exception as e:  # one bad dictation must not stop the tool
+                log.exception("Dictation failed: %s", e)
                 self.notify(f"Dictation failed: {e}")
             finally:
                 with self._cond:

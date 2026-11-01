@@ -135,3 +135,27 @@ def test_quit_stops_tray_and_loop(app):
     app.quit()
     pump(app, seconds=0.2)
     assert app.tray.stopped and app.stopping
+
+
+def test_crash_log_captures_uncaught_errors(tmp_path):
+    import sys
+    import threading
+    from voicetool.app import setup_crash_log
+
+    log = tmp_path / "voicetool.log"
+    old_sys, old_thread = sys.excepthook, threading.excepthook
+    try:
+        setup_crash_log(log)
+        try:
+            raise ValueError("main thread boom")
+        except ValueError:
+            sys.excepthook(*sys.exc_info())
+        t = threading.Thread(target=lambda: (_ for _ in ()).throw(RuntimeError("worker boom")))
+        t.start(); t.join()
+    finally:
+        sys.excepthook, threading.excepthook = old_sys, old_thread
+        import logging
+        for h in logging.getLogger("voicetool").handlers[:]:
+            h.close(); logging.getLogger("voicetool").removeHandler(h)
+    text = log.read_text()
+    assert "main thread boom" in text and "worker boom" in text and "Traceback" in text

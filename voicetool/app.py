@@ -1,17 +1,23 @@
 """Wires everything together. Threads: tkinter owns the main thread, the tray runs detached,
 pynput listens on its own thread, and the pipeline has one worker. Anything that touches tkinter
 is handed to the main thread through call_soon()."""
+import logging
+import logging.handlers
 import os
 import queue
+import sys
 import threading
 import tkinter as tk
+from pathlib import Path
 from typing import Callable
 
 import win32api
 import win32event
 import winerror
 
-from voicetool.config import DATA_DIR, Config
+from voicetool.config import APP_DIR, DATA_DIR, Config
+
+LOG_PATH = APP_DIR / "voicetool.log"
 
 MUTEX_NAME = "VoiceTool.SingleInstance"
 TICK_MS = 30_000
@@ -27,6 +33,27 @@ def fallback_notice(label: str) -> str | None:
     if "fallback" in label:
         return f"GPU unavailable — using {label.split(' ')[0]} model on CPU"
     return None
+
+
+def setup_crash_log(path: Path) -> None:
+    """pythonw has no console, so uncaught errors would vanish. Send them to a log file."""
+    path.parent.mkdir(parents=True, exist_ok=True)
+    logger = logging.getLogger("voicetool")
+    handler = logging.handlers.RotatingFileHandler(path, maxBytes=1_000_000, backupCount=1,
+                                                   encoding="utf-8")
+    handler.setFormatter(logging.Formatter("%(asctime)s %(levelname)s %(message)s"))
+    logger.addHandler(handler)
+    logger.setLevel(logging.INFO)
+
+    def log_main(exc_type, exc, tb):
+        logger.error("Uncaught error", exc_info=(exc_type, exc, tb))
+
+    def log_thread(args):
+        logger.error("Uncaught error in thread %s", args.thread.name if args.thread else "?",
+                     exc_info=(args.exc_type, args.exc_value, args.exc_traceback))
+
+    sys.excepthook = log_main
+    threading.excepthook = log_thread
 
 
 def acquire_single_instance(name: str = MUTEX_NAME):
@@ -133,6 +160,8 @@ def main() -> None:
     from voicetool.win.paste import deliver, foreground
     from voicetool.win.tray import Tray
 
+    setup_crash_log(LOG_PATH)
+    logging.getLogger("voicetool").info("starting")
     mutex = acquire_single_instance()
     if mutex is None:
         win32api.MessageBox(0, "Voice Tool is already running (see the tray).", "Voice Tool")

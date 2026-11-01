@@ -246,3 +246,12 @@ def test_cancel_returns_to_idle():
     h.p.on_event("start")
     h.p.on_event("cancel")
     assert h.states == ["recording", "idle"]
+
+
+def test_failed_dictation_is_logged_with_traceback(caplog):
+    import logging
+    h = Harness()
+    with caplog.at_level(logging.ERROR, logger="voicetool"):
+        h.dictate(RuntimeError("cuda died"))
+        h.p.drain(2)
+    assert any("cuda died" in r.getMessage() and r.exc_info for r in caplog.records)
