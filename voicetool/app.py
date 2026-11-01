@@ -22,7 +22,9 @@ LOG_PATH = APP_DIR / "voicetool.log"
 MUTEX_NAME = "VoiceTool.SingleInstance"
 TICK_MS = 30_000
 PUMP_MS = 50
-_TONES = {"start": (880, 60), "stop": (660, 60)}
+# (Hz, ms). Laptop speakers sleep when idle and take a moment to wake: a 60 ms beep ends
+# before they do and is never heard. 300 ms was measured as audible.
+_TONES = {"start": (880, 300), "stop": (660, 300)}
 
 
 def beep_tone(kind: str) -> tuple[int, int]:

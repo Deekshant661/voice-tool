@@ -5,8 +5,10 @@ from voicetool.config import Config
 
 
 def test_beep_tones():
-    assert beep_tone("start") == (880, 60)
-    assert beep_tone("stop") == (660, 60)
+    # Measured on Deekshant's laptop: a 60 ms beep is silent (the speakers are still waking
+    # from power saving when it ends), a 300 ms one is heard.
+    assert beep_tone("start") == (880, 300)
+    assert beep_tone("stop") == (660, 300)
 
 
 def test_fallback_notice():
