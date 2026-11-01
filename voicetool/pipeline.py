@@ -1,4 +1,8 @@
-"""Hotkey events in, pasted text out. Dictations are processed one at a time, in order."""
+"""Hotkey events in, pasted text out.
+
+Two threads, so the keyboard hook never waits on anything slow:
+- control: handles each hotkey event (opening/closing the mic, the tray state);
+- worker: processes dictations and "delete last" strictly in order, one at a time."""
 import logging
 import queue
 import threading
@@ -16,6 +20,7 @@ _NOTICES = {
     PasteResult.COPIED_FOCUS_MOVED: "Copied — focus moved, paste it with Ctrl+V",
     PasteResult.COPIED_ELEVATED: "Copied — can't paste into admin windows, use Ctrl+V",
 }
+_DELETE_LAST = object()
 
 
 class Pipeline:
@@ -34,15 +39,46 @@ class Pipeline:
         self.on_state = on_state
         self.logging = cfg.logging  # the tray can toggle this while running
         self.open_corrections: Callable[[], None] = lambda: None
-        self._queue: queue.Queue = queue.Queue()
-        self._pending = 0
+        self._events: queue.Queue = queue.Queue()
+        self._work: queue.Queue = queue.Queue()
         self._cond = threading.Condition()
+        self._pending_events = 0
+        self._pending_work = 0
         self._recording = False
         self._target = (0, "", "")
         self._warned_size = False
-        threading.Thread(target=self._worker, daemon=True).start()
+        threading.Thread(target=self._control_loop, daemon=True, name="control").start()
+        threading.Thread(target=self._worker_loop, daemon=True, name="worker").start()
 
     def on_event(self, event: str) -> None:
+        """Called on the keyboard hook thread: only queue the event."""
+        with self._cond:
+            self._pending_events += 1
+        self._events.put(event)
+
+    def drain(self, timeout: float) -> None:
+        deadline = time.monotonic() + timeout
+        with self._cond:
+            while (self._pending_events or self._pending_work) and time.monotonic() < deadline:
+                self._cond.wait(deadline - time.monotonic())
+
+    # --- control thread ---
+    def _control_loop(self) -> None:
+        while True:
+            event = self._events.get()
+            try:
+                self._handle(event)
+            except Exception as e:  # e.g. the mic unplugged mid-dictation
+                self._recording = False
+                log.exception("Hotkey action '%s' failed: %s", event, e)
+                self.notify(f"Voice Tool error: {e}")
+                self._settle_state()
+            finally:
+                with self._cond:
+                    self._pending_events -= 1
+                    self._cond.notify_all()
+
+    def _handle(self, event: str) -> None:
         if event == "start":
             self._target = self.foreground_fn()
             self.models.ensure_loading()
@@ -60,37 +96,40 @@ class Pipeline:
             self._recording = False
             audio = self.recorder.stop()
             self.beep("stop")
-            with self._cond:
-                self._pending += 1
-            self.on_state("working")
-            self._queue.put((audio, self._target))
+            self._enqueue_work((audio, self._target))
         elif event == "cancel":
             if self._recording:
                 self._recording = False
                 self.recorder.cancel()
                 self._settle_state()
         elif event == "delete_last":
-            self.notify("Deleted last recording" if self.store.delete_last() else "Nothing to delete")
+            # Queued behind pending dictations, so it deletes the one just spoken.
+            self._enqueue_work(_DELETE_LAST)
         elif event == "corrections":
             self.open_corrections()
 
-    def drain(self, timeout: float) -> None:
-        deadline = time.monotonic() + timeout
+    def _enqueue_work(self, item) -> None:
         with self._cond:
-            while self._pending and time.monotonic() < deadline:
-                self._cond.wait(deadline - time.monotonic())
+            self._pending_work += 1
+        if item is not _DELETE_LAST:
+            self.on_state("working")
+        self._work.put(item)
 
-    def _worker(self) -> None:
+    # --- worker thread ---
+    def _worker_loop(self) -> None:
         while True:
-            audio, target = self._queue.get()
+            item = self._work.get()
             try:
-                self._process(audio, target)
+                if item is _DELETE_LAST:
+                    self.notify("Deleted last recording" if self.store.delete_last() else "Nothing to delete")
+                else:
+                    self._process(*item)
             except Exception as e:  # one bad dictation must not stop the tool
                 log.exception("Dictation failed: %s", e)
                 self.notify(f"Dictation failed: {e}")
             finally:
                 with self._cond:
-                    self._pending -= 1
+                    self._pending_work -= 1
                     self._cond.notify_all()
                 self._settle_state()
 
@@ -105,18 +144,29 @@ class Pipeline:
         if not text:
             return
         hwnd, title, process = target
-        result = self.deliver_fn(text, hwnd)
+        try:
+            result = self.deliver_fn(text, hwnd)
+        except Exception as e:
+            # Don't lose what was said: keep it in the store and show it.
+            log.exception("Paste failed: %s", e)
+            self._save(audio, raw, text, title, process)
+            self.notify(f"Paste failed ({e}). You said: {text[:200]}")
+            return
         if result in _NOTICES:
             self.notify(_NOTICES[result])
-        if self.logging:
-            self.store.add(audio, raw, text, title, process)
-            if not self._warned_size and self.store.total_bytes() > self.cfg.warn_gb * 1e9:
-                self._warned_size = True
-                self.notify(f"Recordings are over {self.cfg.warn_gb:g} GB — open the data folder to review")
+        self._save(audio, raw, text, title, process)
+
+    def _save(self, audio, raw, text, title, process) -> None:
+        if not self.logging:
+            return
+        self.store.add(audio, raw, text, title, process)
+        if not self._warned_size and self.store.total_bytes() > self.cfg.warn_gb * 1e9:
+            self._warned_size = True
+            self.notify(f"Recordings are over {self.cfg.warn_gb:g} GB — open the data folder to review")
 
     def _settle_state(self) -> None:
         if self._recording:
             return
         with self._cond:
-            busy = self._pending > 0
+            busy = self._pending_work > 0
         self.on_state("working" if busy else "idle")

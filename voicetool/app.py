@@ -83,6 +83,9 @@ class App:
         self.pipeline = make_pipeline(self)
         self.pipeline.open_corrections = lambda: self.call_soon(self.open_corrections)
         self.models.on_loaded = self._on_loaded
+        # pythonw has no stderr, so tk's default error printer would lose these.
+        self.root.report_callback_exception = lambda exc_type, exc, tb: logging.getLogger(
+            "voicetool").error("Error in window callback", exc_info=(exc_type, exc, tb))
         self.root.after(PUMP_MS, self._pump)
 
     # --- main-thread hand-off ---
@@ -90,9 +93,14 @@ class App:
         self._calls.put(fn)
 
     def _pump(self) -> None:
-        while not self._calls.empty():
-            self._calls.get()()
-        if not self.stopping:
+        try:
+            while not self._calls.empty():
+                fn = self._calls.get()
+                try:
+                    fn()
+                except Exception:  # one failed action must not stop all later ones
+                    logging.getLogger("voicetool").exception("Action failed")
+        finally:
             self.root.after(PUMP_MS, self._pump)
 
     # --- used by the pipeline ---
@@ -140,10 +148,10 @@ class App:
         self.root.after(tick_ms, tick)
 
     def quit(self) -> None:
+        # Runs on the tray thread: only the queue may be used to reach tk.
         self.stopping = True
         self.tray.stop()
         self.call_soon(self.root.quit)
-        self.root.after(0, self._pump)
 
 
 def main() -> None:

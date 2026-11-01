@@ -43,3 +43,25 @@ def test_total_bytes_grows(tmp_path):
     b = st.total_bytes()
     st.add(_audio(2), "a", "A", "", "")
     assert st.total_bytes() > b
+
+
+def test_delete_last_when_audio_file_is_locked(tmp_path):
+    # e.g. the FLAC is open in a media player: Windows refuses to delete it.
+    st = Store(tmp_path)
+    st.add(_audio(), "secret", "Secret", "", "")
+    path = st.recent(1)[0].audio_path
+    with open(path, "rb"):
+        assert st.delete_last() is True
+    assert st.recent(5) == []
+
+
+def test_leftover_audio_is_removed_on_next_start(tmp_path):
+    st = Store(tmp_path)
+    st.add(_audio(), "secret", "Secret", "", "")
+    st.add(_audio(), "keep", "Keep", "", "")
+    secret = st.recent(5)[1].audio_path
+    with open(secret, "rb"):
+        st.delete(st.recent(5)[1].id)
+    assert secret.exists()
+    st2 = Store(tmp_path)
+    assert not secret.exists() and [d.raw_text for d in st2.recent(5)] == ["keep"]

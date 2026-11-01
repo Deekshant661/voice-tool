@@ -16,14 +16,20 @@ class FakeRecorder:
     def __init__(self):
         self.next_audio = [np.zeros(SR, np.float32)]
         self.fail_next_start = False
+        self.fail_next_stop = False
+        self.start_sleep = 0.0
         self.cancelled = 0
 
     def start(self):
+        time.sleep(self.start_sleep)
         if self.fail_next_start:
             self.fail_next_start = False
             raise RecorderError("no device")
 
     def stop(self):
+        if self.fail_next_stop:
+            self.fail_next_stop = False
+            raise OSError("device unplugged")
         return self.next_audio.pop(0) if self.next_audio else np.zeros(SR, np.float32)
 
     def cancel(self):
@@ -48,12 +54,15 @@ class FakeStore:
         self.deleted = 0
         self.size = 0
         self.has_rows = True
+        self.ops = []
 
     def add(self, audio, raw, cleaned, title, process):
+        self.ops.append("add")
         self.added.append((raw, cleaned, title, process))
         return len(self.added)
 
     def delete_last(self):
+        self.ops.append("delete_last")
         self.deleted += 1
         return self.has_rows
 
@@ -71,6 +80,7 @@ class Harness:
         self.delivered = []
         self.deliver_result = PasteResult.PASTED
         self.deliver_sleep = 0.0
+        self.deliver_error = None
         self.active = 0
         self.overlap = False
         self.notes = []
@@ -91,6 +101,9 @@ class Harness:
         if self.active > 1:
             self.overlap = True
         time.sleep(self.deliver_sleep)
+        if self.deliver_error:
+            self.active -= 1
+            raise self.deliver_error
         self.delivered.append((text, hwnd))
         self.active -= 1
         return self.deliver_result
@@ -216,6 +229,7 @@ def test_size_warning_once():
 def test_delete_last():
     h = Harness()
     h.p.on_event("delete_last")
+    h.p.drain(2)
     assert h.store.deleted == 1 and h.notes == ["Deleted last recording"]
 
 
@@ -223,6 +237,7 @@ def test_delete_last_when_empty():
     h = Harness()
     h.store.has_rows = False
     h.p.on_event("delete_last")
+    h.p.drain(2)
     assert h.notes == ["Nothing to delete"]
 
 
@@ -231,6 +246,7 @@ def test_corrections_calls_hook():
     opened = []
     h.p.open_corrections = lambda: opened.append(1)
     h.p.on_event("corrections")
+    h.p.drain(2)
     assert opened == [1]
 
 
@@ -245,6 +261,7 @@ def test_cancel_returns_to_idle():
     h = Harness()
     h.p.on_event("start")
     h.p.on_event("cancel")
+    h.p.drain(2)
     assert h.states == ["recording", "idle"]
 
 
@@ -255,3 +272,49 @@ def test_failed_dictation_is_logged_with_traceback(caplog):
         h.dictate(RuntimeError("cuda died"))
         h.p.drain(2)
     assert any("cuda died" in r.getMessage() and r.exc_info for r in caplog.records)
+
+
+def test_slow_mic_does_not_block_the_keyboard_hook():
+    h = Harness()
+    h.recorder.start_sleep = 0.3
+    t = time.monotonic()
+    h.p.on_event("start")
+    assert time.monotonic() - t < 0.05
+    h.p.on_event("stop")
+    h.transcripts.append("hello")
+    h.p.drain(2)
+    assert h.delivered == [("Hello", 42)]
+
+
+def test_event_error_is_reported_and_hotkey_keeps_working(caplog):
+    import logging
+    h = Harness()
+    h.recorder.fail_next_stop = True
+    with caplog.at_level(logging.ERROR, logger="voicetool"):
+        h.p.on_event("start")
+        h.p.on_event("stop")
+        h.p.drain(2)
+    assert any("device unplugged" in n for n in h.notes)
+    assert any("device unplugged" in r.getMessage() for r in caplog.records)
+    h.dictate("works again")
+    h.p.drain(2)
+    assert h.delivered == [("Works again", 42)]
+
+
+def test_delete_last_waits_for_pending_dictation():
+    # Say something sensitive, then delete it straight away: the new one must be deleted.
+    h = Harness()
+    h.deliver_sleep = 0.3
+    h.dictate("my password is hunter2")
+    h.p.on_event("delete_last")
+    h.p.drain(3)
+    assert h.store.ops == ["add", "delete_last"]
+
+
+def test_failed_paste_still_saves_and_shows_text():
+    h = Harness()
+    h.deliver_error = OSError("clipboard locked")
+    h.dictate("important note")
+    h.p.drain(2)
+    assert h.store.added and h.store.added[0][1] == "Important note"
+    assert any("Important note" in n and "clipboard locked" in n for n in h.notes)

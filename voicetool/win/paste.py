@@ -1,5 +1,6 @@
 """Put text at the cursor of the window that had focus when dictation started."""
 import ctypes
+import struct
 import time
 from ctypes import wintypes
 from enum import Enum
@@ -13,7 +14,18 @@ import win32security
 from pynput.keyboard import Controller, Key
 
 PROCESS_QUERY_LIMITED_INFORMATION = 0x1000
-RESTORE_DELAY_S = 0.15  # the target app reads the clipboard after it handles Ctrl+V
+# The target app reads the clipboard some time after it handles Ctrl+V. Electron apps under load,
+# remote desktop and busy terminals can take a few hundred ms; restoring too early pastes the
+# user's OLD clipboard (maybe a password) instead of the dictation.
+RESTORE_DELAY_S = 0.5
+
+# Registered formats that keep text out of Win+V history, cloud clipboard sync and clipboard
+# monitors. Dictations must not leave the machine.
+_PRIVATE_FORMATS = {
+    "ExcludeClipboardContentFromMonitorProcessing": struct.pack("<I", 0),
+    "CanIncludeInClipboardHistory": struct.pack("<I", 0),
+    "CanUploadToCloudClipboard": struct.pack("<I", 0),
+}
 
 
 class PasteResult(Enum):
@@ -106,11 +118,14 @@ def restore_clipboard(snap: dict[int, bytes]) -> None:
         win32clipboard.CloseClipboard()
 
 
-def set_clipboard_text(text: str) -> None:
+def set_clipboard_text(text: str, private: bool = False) -> None:
     _open_clipboard()
     try:
         win32clipboard.EmptyClipboard()
         win32clipboard.SetClipboardData(win32con.CF_UNICODETEXT, text)
+        if private:
+            for name, data in _PRIVATE_FORMATS.items():
+                win32clipboard.SetClipboardData(win32clipboard.RegisterClipboardFormat(name), data)
     finally:
         win32clipboard.CloseClipboard()
 
@@ -129,14 +144,19 @@ def deliver(text: str, target_hwnd: int) -> PasteResult:
     current = win32gui.GetForegroundWindow()
     result = decide(target_hwnd, current, is_elevated(target_hwnd) if target_hwnd == current else False)
     if result is not PasteResult.PASTED:
-        set_clipboard_text(text)  # left there on purpose so the user can paste it themselves
+        set_clipboard_text(text, private=True)  # left there on purpose for the user to paste
         return result
     snap = snapshot_clipboard()
-    set_clipboard_text(text)
-    kb = Controller()
-    with kb.pressed(Key.ctrl_l):
-        kb.press("v")
-        kb.release("v")
-    time.sleep(RESTORE_DELAY_S)
-    restore_clipboard(snap)
+    set_clipboard_text(text, private=True)
+    ours = win32clipboard.GetClipboardSequenceNumber()
+    try:
+        kb = Controller()
+        with kb.pressed(Key.ctrl_l):
+            kb.press("v")
+            kb.release("v")
+        time.sleep(RESTORE_DELAY_S)
+    finally:
+        # Only restore if nobody copied something new in the meantime.
+        if win32clipboard.GetClipboardSequenceNumber() == ours:
+            restore_clipboard(snap)
     return result

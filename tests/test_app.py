@@ -159,3 +159,65 @@ def test_crash_log_captures_uncaught_errors(tmp_path):
             h.close(); logging.getLogger("voicetool").removeHandler(h)
     text = log.read_text()
     assert "main thread boom" in text and "worker boom" in text and "Traceback" in text
+
+
+class FakeRoot:
+    def __init__(self):
+        self.scheduled = []
+        self.quit_called = False
+        self.report_callback_exception = None
+
+    def after(self, ms, fn):
+        self.scheduled.append(fn)
+
+    def quit(self):
+        self.quit_called = True
+
+    def run_scheduled(self):
+        jobs, self.scheduled = self.scheduled, []
+        for fn in jobs:
+            fn()
+
+
+def fake_root_app():
+    root = FakeRoot()
+    a = App(Config(), root, FakeStore(), FakeModels(),
+            make_pipeline=lambda app: FakePipeline(), make_tray=lambda app: FakeTray(),
+            opener=lambda p: None, open_corrections_window=lambda r, s: None)
+    return a, root
+
+
+def test_pump_survives_a_failing_call(caplog):
+    import logging
+    a, root = fake_root_app()
+    ran = []
+    a.call_soon(lambda: 1 / 0)
+    a.call_soon(lambda: ran.append("next"))
+    with caplog.at_level(logging.ERROR, logger="voicetool"):
+        root.run_scheduled()
+    assert ran == ["next"]
+    assert any("ZeroDivisionError" in (r.exc_text or "") or r.exc_info for r in caplog.records)
+    assert root.scheduled, "pump must keep rescheduling itself"
+
+
+def test_tk_callback_errors_go_to_log(caplog):
+    import logging
+    a, root = fake_root_app()
+    with caplog.at_level(logging.ERROR, logger="voicetool"):
+        try:
+            raise ValueError("tk boom")
+        except ValueError:
+            import sys
+            root.report_callback_exception(*sys.exc_info())
+    assert any("tk boom" in str(r.exc_info) for r in caplog.records)
+
+
+def test_quit_from_tray_thread_never_touches_tk_directly():
+    import threading
+    a, root = fake_root_app()
+    before = len(root.scheduled)
+    t = threading.Thread(target=a.quit)
+    t.start(); t.join()
+    assert len(root.scheduled) == before  # only the queue was used
+    root.run_scheduled()
+    assert root.quit_called and a.tray.stopped

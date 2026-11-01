@@ -1,8 +1,9 @@
+from types import SimpleNamespace
+
 import pytest
-from pynput.keyboard import Key, KeyCode
 
 from voicetool.hotkeys import HotkeyMachine
-from voicetool.win.keyboard import key_name
+from voicetool.win.keyboard import KeyRouter, make_filter, name_for_vk
 
 
 def mk():
@@ -63,18 +64,102 @@ def test_second_extra_key_does_not_cancel_twice():
     assert m.down("v") == []
 
 
-def test_key_name_special_and_char():
-    assert key_name(Key.ctrl_r) == "ctrl_r"
-    assert key_name(Key.delete) == "delete"
-    assert key_name(KeyCode.from_char("c")) == "c"
-    assert key_name(KeyCode.from_vk(0x41)) == "vk65"
-    assert key_name(None) == ""
+# --- vk names (the hook reports virtual-key codes) ---
+
+def test_name_for_vk():
+    assert name_for_vk(0xA3) == "ctrl_r"
+    assert name_for_vk(0xA2) == "ctrl_l"
+    assert name_for_vk(0xA1) == "shift_r"
+    assert name_for_vk(0x2E) == "delete"
+    assert name_for_vk(0x43) == "vk67"  # the C key
+
+
+# --- router: runs on the hook thread ---
+
+def router():
+    events = []
+    return KeyRouter(mk(), events.append), events
+
+
+def test_router_posts_events():
+    r, events = router()
+    r.press("ctrl_r", injected=False)
+    r.release("ctrl_r", injected=False)
+    assert events == ["start", "stop"]
+
+
+def test_router_ignores_injected_keys():
+    # Our own Ctrl+V paste must not cancel a dictation the user is recording.
+    r, events = router()
+    assert r.injected_ignored == 0
+    r.press("ctrl_r", injected=False)
+    r.press("ctrl_l", injected=True)
+    r.press("vk86", injected=True)
+    r.release("vk86", injected=True)
+    r.release("ctrl_l", injected=True)
+    r.release("ctrl_r", injected=False)
+    assert events == ["start", "stop"]
+
+
+def test_router_suppresses_its_own_chords():
+    r, events = router()
+    assert r.press("ctrl_r", injected=False) is False
+    assert r.press("delete", injected=False) is True   # the app must not see Ctrl+Delete
+    assert r.release("delete", injected=False) is True
+    assert r.release("ctrl_r", injected=False) is False
+    assert events == ["start", "cancel", "delete_last"]
+
+
+def test_router_does_not_suppress_ordinary_shortcuts():
+    r, _ = router()
+    r.press("ctrl_r", injected=False)
+    assert r.press("vk67", injected=False) is False
+    assert r.release("vk67", injected=False) is False
+
+
+def test_router_never_raises():
+    def boom(event):
+        raise RuntimeError("post failed")
+    r = KeyRouter(mk(), boom)
+    assert r.press("ctrl_r", injected=False) is False
+
+
+# --- the low-level filter ---
+
+def _data(vk, injected=False):
+    return SimpleNamespace(vkCode=vk, flags=0x10 if injected else 0)
+
+
+def test_filter_routes_and_suppresses():
+    events, suppressed = [], []
+    f = make_filter(KeyRouter(mk(), events.append), lambda: suppressed.append(1))
+    assert f(0x100, _data(0xA3)) is False          # WM_KEYDOWN right ctrl: handled, not suppressed
+    f(0x100, _data(0x2E))                          # delete while held
+    assert suppressed == [1]
+    f(0x101, _data(0x2E))
+    f(0x101, _data(0xA3))
+    assert events == ["start", "cancel", "delete_last"] and suppressed == [1, 1]
+
+
+def test_filter_handles_syskey_messages():
+    events = []
+    f = make_filter(KeyRouter(mk(), events.append), lambda: None)
+    f(0x104, _data(0xA3))   # WM_SYSKEYDOWN
+    f(0x105, _data(0xA3))   # WM_SYSKEYUP
+    assert events == ["start", "stop"]
+
+
+def test_filter_ignores_injected():
+    events = []
+    f = make_filter(KeyRouter(mk(), events.append), lambda: None)
+    f(0x100, _data(0xA3, injected=True))
+    assert events == []
 
 
 @pytest.mark.win
-def test_real_listener_sees_injected_keys():
+def test_real_listener_ignores_injected_keys():
     import time
-    from pynput.keyboard import Controller
+    from pynput.keyboard import Controller, Key
     from voicetool.win.keyboard import start_listener
 
     events = []
@@ -83,8 +168,8 @@ def test_real_listener_sees_injected_keys():
         time.sleep(0.3)
         kb = Controller()
         kb.press(Key.ctrl_r); time.sleep(0.05); kb.release(Key.ctrl_r)
-        kb.press(Key.ctrl_r); kb.press(Key.shift_r); kb.release(Key.shift_r); kb.release(Key.ctrl_r)
         time.sleep(0.3)
     finally:
         listener.stop()
-    assert events == ["start", "stop", "start", "cancel", "corrections"]
+    assert events == []
+    assert listener.router.injected_ignored == 2  # the hook saw both and skipped them

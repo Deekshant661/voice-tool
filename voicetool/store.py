@@ -1,4 +1,5 @@
 """Training-data store: one FLAC per dictation plus a SQLite index."""
+import logging
 import sqlite3
 import threading
 from dataclasses import dataclass
@@ -9,6 +10,7 @@ import numpy as np
 import soundfile as sf
 
 SAMPLE_RATE = 16000
+log = logging.getLogger("voicetool")
 
 _SCHEMA = """
 CREATE TABLE IF NOT EXISTS dictations (
@@ -48,6 +50,7 @@ class Store:
         self._db = sqlite3.connect(self.db_path, check_same_thread=False)
         self._db.execute(_SCHEMA)
         self._db.commit()
+        self._remove_orphans()
 
     def add(self, audio: np.ndarray, raw_text: str, cleaned_text: str,
             window_title: str, process_name: str) -> int:
@@ -85,7 +88,10 @@ class Store:
                 return
             self._db.execute("DELETE FROM dictations WHERE id = ?", (id,))
             self._db.commit()
-        (self.audio_dir / row[0]).unlink(missing_ok=True)
+        try:
+            (self.audio_dir / row[0]).unlink(missing_ok=True)
+        except OSError as e:  # open in another program; removed on next start instead
+            log.warning("Could not delete %s yet: %s", row[0], e)
 
     def delete_last(self) -> bool:
         last = self.recent(1)
@@ -97,6 +103,17 @@ class Store:
     def total_bytes(self) -> int:
         files = sum(p.stat().st_size for p in self.audio_dir.glob("*.flac"))
         return files + self.db_path.stat().st_size
+
+    def _remove_orphans(self) -> None:
+        """Audio files whose row was deleted but the file was locked at the time."""
+        with self._lock:
+            known = {r[0] for r in self._db.execute("SELECT audio_path FROM dictations")}
+        for path in self.audio_dir.glob("*.flac"):
+            if path.name not in known:
+                try:
+                    path.unlink()
+                except OSError:
+                    pass
 
     def _new_audio_path(self, now: datetime) -> Path:
         stem = now.strftime("%Y%m%d-%H%M%S-") + f"{now.microsecond // 1000:03d}"

@@ -78,3 +78,63 @@ def test_pastes_into_real_window_and_restores_clipboard(root):
         assert get_clipboard_text() == "before"
     finally:
         win.destroy()
+
+
+def _pretend_target_is_focused(monkeypatch):
+    from voicetool.win import paste
+    monkeypatch.setattr(paste.win32gui, "GetForegroundWindow", lambda: 1234)
+    monkeypatch.setattr(paste, "is_elevated", lambda hwnd: False)
+
+
+@pytest.mark.win
+def test_clipboard_restored_even_if_sending_keys_fails(monkeypatch):
+    from voicetool.win import paste
+    _pretend_target_is_focused(monkeypatch)
+
+    class Broken:
+        def pressed(self, key):
+            raise OSError("SendInput failed")
+    monkeypatch.setattr(paste, "Controller", Broken)
+    set_clipboard_text("my token")
+    with pytest.raises(OSError):
+        deliver("dictated", 1234)
+    assert get_clipboard_text() == "my token"
+
+
+@pytest.mark.win
+def test_user_copy_during_paste_is_not_overwritten(monkeypatch):
+    from voicetool.win import paste
+    _pretend_target_is_focused(monkeypatch)
+
+    class NoKeys:
+        def pressed(self, key):
+            from contextlib import nullcontext
+            return nullcontext()
+        def press(self, k): pass
+        def release(self, k): pass
+    monkeypatch.setattr(paste, "Controller", NoKeys)
+    monkeypatch.setattr(paste.time, "sleep", lambda s: set_clipboard_text("copied meanwhile"))
+    set_clipboard_text("before")
+    deliver("dictated", 1234)
+    assert get_clipboard_text() == "copied meanwhile"
+
+
+def test_restore_waits_long_enough_for_slow_apps():
+    from voicetool.win import paste
+    assert paste.RESTORE_DELAY_S >= 0.4
+
+
+@pytest.mark.win
+def test_dictation_text_is_kept_out_of_clipboard_history_and_cloud():
+    import struct
+    import win32clipboard
+    deliver("private words", 0x7FFFFFF0)  # focus-moved path leaves it on the clipboard
+    win32clipboard.OpenClipboard()
+    try:
+        def fmt(name):
+            return win32clipboard.RegisterClipboardFormat(name)
+        assert win32clipboard.IsClipboardFormatAvailable(fmt("ExcludeClipboardContentFromMonitorProcessing"))
+        for name in ("CanIncludeInClipboardHistory", "CanUploadToCloudClipboard"):
+            assert struct.unpack("<I", win32clipboard.GetClipboardData(fmt(name))[:4])[0] == 0
+    finally:
+        win32clipboard.CloseClipboard()
