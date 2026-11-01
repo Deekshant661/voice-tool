@@ -2,6 +2,8 @@ import time
 
 import pytest
 
+from tests.conftest import force_foreground
+
 from voicetool.win.paste import (PasteResult, decide, deliver, foreground, get_clipboard_text,
                                  is_elevated, restore_clipboard, set_clipboard_text,
                                  snapshot_clipboard)
@@ -45,23 +47,16 @@ def test_focus_moved_leaves_text_on_clipboard():
 
 
 @pytest.mark.win
-def test_pastes_into_real_window_and_restores_clipboard():
+def test_pastes_into_real_window_and_restores_clipboard(root):
     import tkinter as tk
-    import win32gui
 
-    root = tk.Tk()
-    root.title("voicetool paste test")
-    entry = tk.Entry(root, width=60)
+    win = tk.Toplevel(root)
+    win.title("voicetool paste test")
+    entry = tk.Entry(win, width=60)
     entry.pack()
+    hwnd = force_foreground(win, root)
+    entry.focus_force()
     root.update()
-    hwnd = int(root.wm_frame(), 16)
-    root.lift(); root.attributes("-topmost", True); root.focus_force(); entry.focus_set()
-    try:
-        win32gui.SetForegroundWindow(hwnd)
-    except Exception:
-        pass
-    for _ in range(20):
-        root.update(); time.sleep(0.05)
     target = foreground()[0]
     assert target == hwnd, "test window did not get focus"
     assert is_elevated(target) is False
@@ -82,4 +77,4 @@ def test_pastes_into_real_window_and_restores_clipboard():
         assert entry.get() == "check the Postgres database"
         assert get_clipboard_text() == "before"
     finally:
-        root.destroy()
+        win.destroy()
