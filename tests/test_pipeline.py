@@ -14,7 +14,7 @@ SR = 16000
 
 class FakeRecorder:
     def __init__(self):
-        self.next_audio = [np.zeros(SR, np.float32)]
+        self.next_audio = [np.full(SR, 0.1, np.float32)]
         self.fail_next_start = False
         self.fail_next_stop = False
         self.start_sleep = 0.0
@@ -30,7 +30,7 @@ class FakeRecorder:
         if self.fail_next_stop:
             self.fail_next_stop = False
             raise OSError("device unplugged")
-        return self.next_audio.pop(0) if self.next_audio else np.zeros(SR, np.float32)
+        return self.next_audio.pop(0) if self.next_audio else np.full(SR, 0.1, np.float32)
 
     def cancel(self):
         self.cancelled += 1
@@ -109,7 +109,7 @@ class Harness:
         return self.deliver_result
 
     def dictate(self, transcript, seconds=1.0):
-        self.recorder.next_audio = [np.zeros(int(SR * seconds), np.float32)]
+        self.recorder.next_audio = [np.full(int(SR * seconds), 0.1, np.float32)]
         self.transcripts.append(transcript)
         self.p.on_event("start")
         self.p.on_event("stop")
@@ -318,3 +318,27 @@ def test_failed_paste_still_saves_and_shows_text():
     h.p.drain(2)
     assert h.store.added and h.store.added[0][1] == "Important note"
     assert any("Important note" in n and "clipboard locked" in n for n in h.notes)
+
+
+def test_progress_is_logged_without_the_words(caplog):
+    import logging
+    h = Harness()
+    with caplog.at_level(logging.INFO, logger="voicetool"):
+        h.dictate("my secret plan")
+        h.p.drain(2)
+    text = "\n".join(r.getMessage() for r in caplog.records)
+    assert "hotkey: start" in text and "hotkey: stop" in text
+    assert "pasted" in text.lower()
+    assert "secret" not in text.lower()
+
+
+def test_silent_recording_warns_with_device_name():
+    h = Harness()
+    h.recorder.device_name = "Microphone (Voicemod)"
+    h.recorder.next_audio = [np.zeros(SR * 2, np.float32)]
+    h.transcripts.append("should not be used")
+    h.p.on_event("start")
+    h.p.on_event("stop")
+    h.p.drain(2)
+    assert h.transcripts == ["should not be used"] and h.delivered == []
+    assert any("silence" in n and "Voicemod" in n for n in h.notes)

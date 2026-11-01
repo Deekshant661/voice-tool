@@ -22,3 +22,11 @@ def test_values_override(tmp_path):
 def test_repo_config_loads():
     c = load_config(Path(__file__).parent.parent / "config.toml")
     assert "Vezras" in c.vocabulary
+
+
+def test_input_device_default_and_override(tmp_path):
+    p = tmp_path / "c.toml"
+    p.write_text("")
+    assert load_config(p).input_device == ""
+    p.write_text('[dictation]\ninput_device = "Microphone Array"\n')
+    assert load_config(p).input_device == "Microphone Array"

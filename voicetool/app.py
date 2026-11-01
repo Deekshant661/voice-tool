@@ -111,6 +111,7 @@ class App:
         self.tray.set_state(state)
 
     def _on_loaded(self, label: str) -> None:
+        logging.getLogger("voicetool").info("model loaded: %s", label)
         notice = fallback_notice(label)
         if notice:
             self.notify(notice)
@@ -138,6 +139,7 @@ class App:
 
     def start(self, tick_ms: int = TICK_MS) -> None:
         self.tray.start()
+        logging.getLogger("voicetool").info("ready: hold %s to dictate", self.cfg.talk_key)
 
         def tick():
             if self.stopping:
@@ -161,7 +163,7 @@ def main() -> None:
     from voicetool.hotkeys import HotkeyMachine
     from voicetool.model_manager import ModelManager
     from voicetool.pipeline import Pipeline
-    from voicetool.recorder import Recorder
+    from voicetool.recorder import Recorder, RecorderError, find_input_device
     from voicetool.store import Store
     from voicetool.transcriber import load_model, transcribe
     from voicetool.win.keyboard import start_listener
@@ -182,12 +184,18 @@ def main() -> None:
     models = ModelManager(lambda: load_model(cfg), cfg.idle_unload_minutes * 60)
     models.keep_loaded = cfg.keep_loaded
 
+    mic_problem = None
+    try:
+        device = find_input_device(cfg.input_device)
+    except RecorderError as e:
+        device, mic_problem = None, f"{e}. Using the Windows default mic."
+
     def beep(kind: str) -> None:
         threading.Thread(target=winsound.Beep, args=beep_tone(kind), daemon=True).start()
 
     app = App(
         cfg, root, store, models,
-        make_pipeline=lambda a: Pipeline(cfg, Recorder(), models, store, deliver, foreground,
+        make_pipeline=lambda a: Pipeline(cfg, Recorder(device=device), models, store, deliver, foreground,
                                          transcribe, a.notify, beep, a.set_state),
         make_tray=lambda a: Tray(a.status, a.toggle_logging, a.unload, a.toggle_keep_loaded,
                                  a.open_data, lambda: a.call_soon(a.open_corrections), a.quit),
@@ -195,6 +203,9 @@ def main() -> None:
     machine = HotkeyMachine(cfg.talk_key, cfg.corrections_key, cfg.delete_last_key)
     listener = start_listener(machine, app.pipeline.on_event)
     app.start()
+    logging.getLogger("voicetool").info("microphone: %s", app.pipeline.recorder.device_name)
+    if mic_problem:
+        app.notify(mic_problem)
     try:
         root.mainloop()
     finally:

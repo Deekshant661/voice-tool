@@ -18,6 +18,9 @@ keep_loaded = false
 [dictation]
 min_seconds = 0.3
 language = "en"
+# Part of the microphone's name (see Windows Sound settings). Empty = the Windows default mic.
+# Your default is the Voicemod virtual mic, which is silent unless the Voicemod app is running.
+input_device = "Microphone Array"
 # Words Whisper should spell your way.
 vocabulary = ["Vezras", "RDS", "pm2", "GitLab", "Postgres", "AWS", "Claude", "Jarvis"]
 

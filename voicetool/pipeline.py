@@ -11,7 +11,7 @@ from typing import Callable
 
 from voicetool.cleanup import clean
 from voicetool.config import Config
-from voicetool.recorder import RecorderError, too_short
+from voicetool.recorder import RecorderError, is_silent, too_short
 from voicetool.win.paste import PasteResult
 
 log = logging.getLogger("voicetool")
@@ -66,6 +66,7 @@ class Pipeline:
     def _control_loop(self) -> None:
         while True:
             event = self._events.get()
+            log.info("hotkey: %s", event)
             try:
                 self._handle(event)
             except Exception as e:  # e.g. the mic unplugged mid-dictation
@@ -134,14 +135,22 @@ class Pipeline:
                 self._settle_state()
 
     def _process(self, audio, target) -> None:
+        seconds = len(audio) / 16000
         if too_short(audio, self.cfg.min_seconds):
+            log.info("dictation: %.2f s, too short, skipped", seconds)
             return
+        if is_silent(audio):
+            name = getattr(self.recorder, "device_name", "the microphone")
+            log.info("dictation: %.2f s of pure silence from %s", seconds, name)
+            self.notify(f"Microphone sent silence ({name}). Is it muted? "
+                        "Choose another with input_device in config.toml")
+            return
+        started = time.monotonic()
         with self.models.use() as model:
             raw = self.transcribe_fn(model, audio, self.cfg)
-        if not raw:
-            return
-        text = clean(raw, self.cfg.fillers, self.cfg.replacements)
+        text = clean(raw, self.cfg.fillers, self.cfg.replacements) if raw else ""
         if not text:
+            log.info("dictation: %.2f s, no speech found", seconds)
             return
         hwnd, title, process = target
         try:
@@ -152,6 +161,8 @@ class Pipeline:
             self._save(audio, raw, text, title, process)
             self.notify(f"Paste failed ({e}). You said: {text[:200]}")
             return
+        log.info("dictation: %.2f s audio, %d chars, %s in %.2f s", seconds, len(text),
+                 result.value, time.monotonic() - started)
         if result in _NOTICES:
             self.notify(_NOTICES[result])
         self._save(audio, raw, text, title, process)

@@ -25,6 +25,7 @@ class Config:
     keep_loaded: bool = False
     min_seconds: float = 0.3
     language: str = "en"
+    input_device: str = ""  # part of the mic's name; empty = the Windows default mic
     vocabulary: list[str] = field(default_factory=list)
     fillers: list[str] = field(default_factory=lambda: ["um", "uh", "uhm", "erm", "hmm"])
     replacements: dict[str, str] = field(default_factory=dict)
@@ -45,6 +46,7 @@ _FIELDS = {
     "keep_loaded": ("model", "keep_loaded"),
     "min_seconds": ("dictation", "min_seconds"),
     "language": ("dictation", "language"),
+    "input_device": ("dictation", "input_device"),
     "vocabulary": ("dictation", "vocabulary"),
     "fillers": ("cleanup", "fillers"),
     "replacements": ("cleanup", "replacements"),
