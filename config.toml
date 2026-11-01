@@ -1,0 +1,33 @@
+# Voice Tool settings. Restart the app after editing.
+
+[hotkeys]
+# Hold to talk. Names follow pynput: ctrl_r, ctrl_l, alt_r, shift_r, f13, ...
+talk = "ctrl_r"
+# Pressed while holding the talk key.
+corrections = "shift_r"
+delete_last = "delete"
+
+[model]
+name = "large-v3-turbo"
+device = "cuda"
+compute_type = "float16"
+fallback = "small"
+idle_unload_minutes = 30
+keep_loaded = false
+
+[dictation]
+min_seconds = 0.3
+language = "en"
+# Words Whisper should spell your way.
+vocabulary = ["Vezras", "RDS", "pm2", "GitLab", "Postgres", "AWS", "Claude", "Jarvis"]
+
+[cleanup]
+fillers = ["um", "uh", "uhm", "erm", "hmm"]
+
+[cleanup.replacements]
+# "what whisper writes" = "what you want"
+"pm 2" = "pm2"
+
+[data]
+logging = true
+warn_gb = 5

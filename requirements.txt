@@ -1,0 +1,11 @@
+faster-whisper
+nvidia-cublas-cu12
+nvidia-cudnn-cu12
+numpy
+sounddevice
+soundfile
+pynput
+pywin32
+pystray
+Pillow
+pytest
