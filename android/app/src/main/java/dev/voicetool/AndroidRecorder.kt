@@ -25,8 +25,12 @@ class AndroidRecorder : Recorder {
         check(rec.state == AudioRecord.STATE_INITIALIZED) { rec.release(); "microphone busy or denied" }
         buffer = ShortArray(SAMPLE_RATE * 10)
         size = 0
-        running = true
         rec.startRecording()
+        if (rec.recordingState != AudioRecord.RECORDSTATE_RECORDING) {
+            rec.release()
+            throw IllegalStateException("microphone in use by another app (a call?)")
+        }
+        running = true
         worker = thread(name = "recorder") {
             val chunk = ShortArray(1600)
             try {
@@ -48,7 +52,7 @@ class AndroidRecorder : Recorder {
 
     override fun stop(): ShortArray {
         running = false
-        worker?.join(1000)
+        worker?.join(3000)
         worker = null
         return synchronized(this) { buffer.copyOf(size) }
     }

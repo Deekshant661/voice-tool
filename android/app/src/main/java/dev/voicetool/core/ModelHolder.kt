@@ -51,11 +51,16 @@ class ModelHolder<T : Any>(
     }
 
     /** Call periodically; returns true if it freed the model. */
-    fun tick(): Boolean {
+    fun tick(): Boolean = free { clock() - lastUsed >= idleMs }
+
+    /** Free it now if no dictation is using it (e.g. a different model was chosen). */
+    fun releaseNow(): Boolean = free { true }
+
+    private fun free(due: () -> Boolean): Boolean {
         val m: T
         synchronized(lock) {
             m = model ?: return false
-            if (inUse > 0 || clock() - lastUsed < idleMs) return false
+            if (inUse > 0 || !due()) return false
             model = null
         }
         close(m)

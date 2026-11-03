@@ -38,16 +38,21 @@ class WhisperEngine private constructor(private var handle: Long, private val co
 
         @JvmStatic private external fun nativeLoad(path: String): Long
         @JvmStatic private external fun nativeFree(handle: Long)
-        @JvmStatic private external fun nativeTranscribe(handle: Long, pcm: FloatArray, prompt: String?,
-                                                         cores: IntArray, audioCtx: Int): Array<String>?
+        @JvmStatic private external fun nativeTranscribe(handle: Long, pcm: FloatArray, prompt: ByteArray?,
+                                                         cores: IntArray, audioCtx: Int): Array<Any>?
     }
 
     @Synchronized
     override fun transcribe(pcm: FloatArray, prompt: String?): List<Segment> {
         check(handle != 0L) { "model was released" }
-        val raw = nativeTranscribe(handle, pcm, prompt, cores, AudioCtx.forSamples(pcm.size))
+        val out = nativeTranscribe(handle, pcm, prompt?.toByteArray(Charsets.UTF_8), cores,
+            AudioCtx.forSamples(pcm.size))
             ?: throw IllegalStateException("Whisper could not transcribe this recording")
-        return raw.map { Segment(it.substringAfter('\t'), it.substringBefore('\t').toFloatOrNull() ?: 0f) }
+        val noSpeech = out[0] as FloatArray
+        val logprob = out[1] as FloatArray
+        @Suppress("UNCHECKED_CAST") val texts = out[2] as Array<ByteArray>
+        // Malformed UTF-8 (a split character) decodes to a replacement mark instead of crashing.
+        return texts.indices.map { Segment(String(texts[it], Charsets.UTF_8), noSpeech[it], logprob[it]) }
     }
 
     @Synchronized

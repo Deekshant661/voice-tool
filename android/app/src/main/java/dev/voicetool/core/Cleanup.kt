@@ -11,8 +11,8 @@ fun clean(text: String, fillers: List<String>, replacements: Map<String, String>
     for ((wrong, right) in replacements) {
         t = Regex("(?iU)\\b${Regex.escape(wrong)}\\b").replace(t) { right }
     }
-    t = Regex("\\s+").replace(t, " ")
-    t = Regex("\\s+([,.?!:])").replace(t, "$1")
+    t = Regex("(?U)\\s+").replace(t, " ")
+    t = Regex("(?U)\\s+([,.?!:])").replace(t, "$1")
     t = t.trim()
     if (!Regex("(?U)\\w").containsMatchIn(t)) return ""
     return t.substring(0, 1).uppercase() + t.substring(1)

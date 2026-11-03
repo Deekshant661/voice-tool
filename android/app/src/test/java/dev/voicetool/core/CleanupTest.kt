@@ -27,6 +27,9 @@ class CleanupTest {
     @Test fun replacementTextIsTakenLiterally() =
         assertEquals("Cost $1", clean("cost one", f, mapOf("one" to "$1")))
 
+    @Test fun unicodeSpacesCollapseLikePython() =
+        assertEquals("Hello world", clean("hello\u00a0\u00a0world", f, emptyMap()))
+
     @Test fun spaceBeforePunctuationRemoved() =
         assertEquals("Hello, world.", clean("hello , world .", f, emptyMap()))
 }

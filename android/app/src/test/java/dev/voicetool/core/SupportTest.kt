@@ -42,6 +42,14 @@ class ModelHolderTest {
         finish.countDown(); t.join()
     }
 
+    @Test fun releaseNowFreesAnIdleModelSoASettingsChangeApplies() {
+        val closed = mutableListOf<String>()
+        val h = ModelHolder({ "model" }, { closed += it }, 60_000)
+        h.use { }
+        assertTrue(h.releaseNow())
+        assertEquals(listOf("model"), closed)
+    }
+
     @Test fun preloadStartsLoadingInTheBackground() {
         val loaded = CountDownLatch(1)
         val h = ModelHolder({ loaded.countDown(); "model" }, {}, 1000)

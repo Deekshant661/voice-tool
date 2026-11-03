@@ -20,6 +20,7 @@ import android.widget.RadioButton
 import android.widget.RadioGroup
 import android.widget.ScrollView
 import android.widget.TextView
+import android.widget.Toast
 import dev.voicetool.core.Settings
 
 private fun Context.column(vararg views: android.view.View) = LinearLayout(this).apply {
@@ -106,21 +107,32 @@ class RecentActivity : Activity() {
     private fun edit(d: Dictation) {
         // Raw text, not cleaned: training data should stay word-for-word.
         val box = EditText(this).apply { setText(d.correctedText ?: d.rawText) }
-        AlertDialog.Builder(this).setTitle("What you really said").setView(box)
+        val dialog = AlertDialog.Builder(this).setTitle("What you really said").setView(box)
             .setPositiveButton("Save") { _, _ -> VoiceTool.store(this).setCorrection(d.id, box.text.toString().trim()); refresh() }
-            .setNeutralButton("Play") { _, _ -> play(d); edit(d) }
+            .setNeutralButton("Play", null)  // wired below so it doesn't close the dialog
             .setNegativeButton("Delete") { _, _ ->
                 AlertDialog.Builder(this).setMessage("Delete this recording?")
                     .setPositiveButton("Delete") { _, _ -> VoiceTool.store(this).delete(d.id); refresh() }
                     .setNegativeButton("Keep", null).show()
-            }.show()
+            }.create()
+        dialog.setOnShowListener {
+            dialog.getButton(AlertDialog.BUTTON_NEUTRAL).setOnClickListener { play(d) }
+        }
+        dialog.show()
     }
 
     private fun play(d: Dictation) {
         player?.release()
-        player = MediaPlayer().apply {
-            setDataSource(VoiceTool.store(this@RecentActivity).audioFile(d).absolutePath)
-            prepare(); start()
+        player = null
+        val file = VoiceTool.store(this).audioFile(d)
+        try {
+            player = MediaPlayer().apply {
+                setDataSource(file.absolutePath)
+                setOnCompletionListener { it.release(); if (player === it) player = null }
+                prepare(); start()
+            }
+        } catch (e: Exception) {
+            Toast.makeText(this, "Can't play this recording: ${e.message}", Toast.LENGTH_LONG).show()
         }
     }
 }
@@ -146,9 +158,9 @@ class SettingsActivity : Activity() {
                 label("Settings", 24f),
                 label("Words Whisper should spell your way (comma separated)"), vocab,
                 label("Replacements, one per line: what Whisper writes = what you want"), repl,
-                label("Model (a change applies within 2 minutes)"), models, save,
+                label("Model (applies the next time the keyboard opens)"), models, save,
                 button("Save") {
-                    val model = Models.NAMES.first { it.hashCode() == models.checkedRadioButtonId }
+                    val model = Models.NAMES.firstOrNull { it.hashCode() == models.checkedRadioButtonId } ?: "small.en"
                     VoiceTool.saveSettings(this@SettingsActivity, vocab.text.toString(), repl.text.toString(), model, save.isChecked)
                     finish()
                 },

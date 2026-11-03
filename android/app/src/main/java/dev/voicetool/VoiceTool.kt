@@ -19,9 +19,14 @@ object VoiceTool {
     fun store(ctx: Context): DictationStore =
         store ?: DictationStore(File(ctx.filesDir, "data")).also { store = it }
 
+    @Volatile private var loadedModel: String? = null
+
     @Synchronized
     fun models(ctx: Context): ModelHolder<SpeechEngine> = models ?: ModelHolder<SpeechEngine>(
-        loader = { WhisperEngine.load(Models.file(ctx, settings(ctx).model)) },
+        loader = {
+            val name = settings(ctx).model
+            WhisperEngine.load(Models.file(ctx, name)).also { loadedModel = name }
+        },
         close = { (it as WhisperEngine).close() },
         idleMs = IDLE_RELEASE_MS,
     ).also { models = it }
@@ -43,6 +48,12 @@ object VoiceTool {
         ctx.applicationContext.getSharedPreferences(PREFS, Context.MODE_PRIVATE).edit()
             .putString("vocabulary", vocabulary).putString("replacements", replacements)
             .putString("model", model).putBoolean("save", save).apply()
+    }
+
+    /** A different model chosen in settings: free the old one so the next dictation loads it. */
+    fun applyModelChoice(ctx: Context) {
+        val loaded = loadedModel ?: return
+        if (loaded != settings(ctx).model && models(ctx).releaseNow()) loadedModel = null
     }
 
     fun lowOnSpace(ctx: Context): Boolean = ctx.filesDir.usableSpace < LOW_SPACE_BYTES

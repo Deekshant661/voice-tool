@@ -13,12 +13,13 @@ class FakeRecorder : Recorder {
     var started = 0
     override fun start() { failStart?.let { throw it }; started++ }
     override fun stop(): ShortArray = next
-    override fun cancel() {}
+    var cancelled = 0
+    override fun cancel() { cancelled++ }
 }
 
 class FakeEngine : SpeechEngine {
-    var segments = listOf(Segment(" um restart PM 2 now", 0.05f))
-    var error: Exception? = null
+    var segments = listOf(Segment(" um restart PM 2 now", 0.05f, -0.2f))
+    var error: Throwable? = null
     var prompts = mutableListOf<String?>()
     override fun transcribe(pcm: FloatArray, prompt: String?): List<Segment> {
         prompts += prompt
@@ -30,19 +31,24 @@ class FakeEngine : SpeechEngine {
 class FakeStore : Store {
     val added = mutableListOf<Triple<String, String, String>>()  // raw, cleaned, package
     val ops = mutableListOf<String>()
-    var hasRows = true
+    var addError: Exception? = null
+    val deleted = mutableListOf<Long>()
     override fun add(pcm: ShortArray, raw: String, cleaned: String, processName: String): Long {
+        addError?.let { throw it }
         ops += "add"; added += Triple(raw, cleaned, processName); return added.size.toLong()
     }
-    override fun deleteLast(): Boolean { ops += "deleteLast"; return hasRows }
+    override fun delete(id: Long): Boolean { ops += "delete $id"; deleted += id; return true }
 }
 
 class FakeSink : TextSink {
     var token = 1
     val typed = mutableListOf<String>()
     var accept = true
-    override fun currentToken() = token
-    override fun commit(text: String): Boolean { if (accept) typed += text; return accept }
+    override fun commit(text: String, token: Int): Boolean {
+        val ok = accept && token == this.token
+        if (ok) typed += text
+        return ok
+    }
 }
 
 class Harness(settings: Settings = Settings()) {
@@ -133,14 +139,14 @@ class PipelineTest {
 
     @Test fun segmentsWhisperRatesAsNotSpeechAreDropped() {
         val h = Harness()
-        h.engine.segments = listOf(Segment(" Deploy it.", 0.05f), Segment(" Thank you.", 0.9f))
+        h.engine.segments = listOf(Segment(" Deploy it.", 0.05f, -0.3f), Segment(" Thank you.", 0.9f, -1.5f))
         h.dictate()
         assertEquals(listOf("Deploy it."), h.sink.typed)
     }
 
     @Test fun nothingHeardSaysSo() {
         val h = Harness()
-        h.engine.segments = listOf(Segment(" Thank you.", 0.9f))
+        h.engine.segments = listOf(Segment(" Thank you.", 0.9f, -1.4f))
         h.dictate()
         assertTrue(h.sink.typed.isEmpty() && h.store.added.isEmpty())
         assertEquals(listOf("No speech heard"), h.notes)
@@ -169,7 +175,66 @@ class PipelineTest {
         val h = Harness()
         h.dictate()
         h.p.deleteLast()
-        assertEquals(listOf("add", "deleteLast"), h.store.ops)
+        assertEquals(listOf("add", "delete 1"), h.store.ops)
         assertEquals(listOf("Deleted last recording"), h.notes)
+    }
+
+    @Test fun deleteLastNeverDeletesAnOlderRecordingWhenTheLastWasntSaved() {
+        val h = Harness()
+        h.dictate()
+        h.dictate(Field(allowed = true, save = false))  // incognito: typed, not saved
+        h.p.deleteLast()
+        assertTrue(h.store.deleted.isEmpty())
+        assertEquals(listOf("The last dictation wasn't saved"), h.notes)
+    }
+
+    @Test fun deleteLastTwiceDeletesOnlyOnce() {
+        val h = Harness()
+        h.dictate()
+        h.p.deleteLast(); h.p.deleteLast()
+        assertEquals(listOf(1L), h.store.deleted)
+    }
+
+    @Test fun confidentSpeechIsKeptEvenWhenNoSpeechIsHigh() {
+        // Desktop rule: drop only if no_speech > 0.6 AND avg_logprob < -1.0.
+        val h = Harness()
+        h.engine.segments = listOf(Segment(" Deploy it.", 0.7f, -0.2f))
+        h.dictate()
+        assertEquals(listOf("Deploy it."), h.sink.typed)
+    }
+
+    @Test fun modelLoadErrorDoesNotCrashTheKeyboard() {
+        val h = Harness()
+        h.engine.error = OutOfMemoryError("model too big")
+        h.dictate()
+        assertEquals("idle", h.states.last())
+        assertTrue(h.notes.single().startsWith("Dictation failed: model too big"))
+    }
+
+    @Test fun failedTranscriptionStillKeepsTheRecording() {
+        val h = Harness()
+        h.engine.error = IllegalStateException("whisper failed")
+        h.dictate()
+        assertEquals(listOf(Triple("", "", "com.whatsapp")), h.store.added)
+    }
+
+    @Test fun saveFailureAfterTypingSaysSoAccurately() {
+        val h = Harness()
+        h.store.addError = IllegalStateException("disk full")
+        h.dictate()
+        assertEquals(listOf("Restart pm2 now"), h.sink.typed)
+        assertEquals(listOf("Typed, but the recording wasn't saved: disk full"), h.notes)
+    }
+
+    @Test fun keyboardClosingMidHoldStopsTheMicAndDiscards() {
+        val h = Harness()
+        h.p.press(Field(true, true), 1, "com.whatsapp")
+        h.p.cancel()
+        h.p.release()
+        assertTrue(h.engine.prompts.isEmpty() && h.store.added.isEmpty())
+        assertEquals(1, h.recorder.cancelled)
+        assertEquals("idle", h.states.last())
+        h.dictate()
+        assertEquals(1, h.sink.typed.size)  // the next press works
     }
 }

@@ -74,15 +74,16 @@ class DictationStore(private val dir: File) : Store {
     }
 
     @Synchronized
-    fun delete(id: Long) {
+    override fun delete(id: Long): Boolean {
         val path = db.rawQuery("SELECT audio_path FROM dictations WHERE id = ?", arrayOf(id.toString()))
-            .use { if (it.moveToFirst()) it.getString(0) else null } ?: return
+            .use { if (it.moveToFirst()) it.getString(0) else null } ?: return false
         db.delete("dictations", "id = ?", arrayOf(id.toString()))
         File(audioDir, path).delete()
+        return true
     }
 
     @Synchronized
-    override fun deleteLast(): Boolean {
+    fun deleteLast(): Boolean {
         val last = recent(1).firstOrNull() ?: return false
         delete(last.id)
         return true

@@ -2,6 +2,7 @@
     <!-- The only permission. No INTERNET: audio and text cannot leave the phone. -->
     <uses-permission android:name="android.permission.RECORD_AUDIO" />
     <application android:label="Voice Tool" android:allowBackup="false"
+        android:dataExtractionRules="@xml/no_data_extraction"
         android:theme="@android:style/Theme.DeviceDefault">
         <activity android:name=".SetupActivity" android:exported="true">
             <intent-filter>

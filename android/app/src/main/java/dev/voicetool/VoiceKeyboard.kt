@@ -22,6 +22,8 @@ import dev.voicetool.core.Pipeline
 import dev.voicetool.core.Spacing
 import dev.voicetool.core.TextSink
 import java.util.concurrent.Executors
+import java.util.concurrent.FutureTask
+import java.util.concurrent.TimeUnit
 
 /** The dictation keyboard: hold the mic, speak, release. */
 class VoiceKeyboard : InputMethodService(), TextSink {
@@ -52,9 +54,16 @@ class VoiceKeyboard : InputMethodService(), TextSink {
     }
 
     // --- TextSink, called from the worker thread ---
-    override fun currentToken() = token
+    /** Types on the main thread, where focus changes happen, so "is this still his box?" and the
+     *  typing itself can't be split by a focus change. */
+    override fun commit(text: String, token: Int): Boolean {
+        val task = FutureTask { commitHere(text, token) }
+        main.post(task)
+        return try { task.get(5, TimeUnit.SECONDS) } catch (e: Exception) { false }
+    }
 
-    override fun commit(text: String): Boolean {
+    private fun commitHere(text: String, expected: Int): Boolean {
+        if (expected != token || !field.allowed) return false
         val ic = currentInputConnection ?: return false
         return ic.commitText(Spacing.join(ic.getTextBeforeCursor(1, 0), text), 1)
     }
@@ -67,11 +76,18 @@ class VoiceKeyboard : InputMethodService(), TextSink {
 
     override fun onFinishInput() {
         token++
+        pipeline.cancel()  // e.g. a call comes in mid-hold: the mic must not keep recording
         super.onFinishInput()
+    }
+
+    override fun onFinishInputView(finishingInput: Boolean) {
+        pipeline.cancel()
+        super.onFinishInputView(finishingInput)
     }
 
     override fun onStartInputView(info: EditorInfo, restarting: Boolean) {
         super.onStartInputView(info, restarting)
+        VoiceTool.applyModelChoice(this)
         VoiceTool.models(this).preload()  // load while he gets ready to speak
         setState(state)
         when {
@@ -110,7 +126,7 @@ class VoiceKeyboard : InputMethodService(), TextSink {
         key("Delete last") { pipeline.deleteLast() }
         key("Insert last") {
             val t = pipeline.lastText
-            if (t == null) show("Nothing to insert") else if (!commit(t)) show("Can't type here")
+            if (t == null) show("Nothing to insert") else if (!commitHere(t, token)) show("Can't type here")
         }
         key("Recent") { open(RecentActivity::class.java) }
         key("⌨") { if (!switchToPreviousInputMethod()) show("Switch keyboards from the ⌨ icon") }
