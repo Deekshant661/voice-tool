@@ -2,3 +2,9 @@ __pycache__/
 .pytest_cache/
 *.pyc
 .superpowers/
+
+# Planning docs and AI-assistant files (kept local only)
+docs/
+handoff/
+.claude/
+CLAUDE.md
