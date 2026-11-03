@@ -58,6 +58,7 @@ def test_our_own_injected_paste_is_ignored():
 
 
 class FakeListener:
+    tap = "tap"
     def __init__(self, **kw):
         self.kw = kw
         self.started = False
@@ -82,3 +83,49 @@ def test_listen_only_mode_without_accessibility():
     listener.kw["on_press"](Key.alt_r)
     listener.kw["on_release"](Key.alt_r)
     assert posted == ["start", "stop"]
+
+
+TAP_DISABLED_BY_TIMEOUT, TAP_DISABLED_BY_USER = 0xFFFFFFFE, 0xFFFFFFFF
+
+
+def test_tap_switched_off_by_macos_is_switched_back_on():
+    posted, enabled = [], []
+    router = KeyRouter(HotkeyMachine("alt_r", "shift_r", "backspace"), posted.append)
+    hook = mk.make_intercept(router, OWN_PID, lambda e: (0, 0, 0),
+                             reenable=lambda: enabled.append(True))
+    hook(TAP_DISABLED_BY_TIMEOUT, "e")
+    hook(TAP_DISABLED_BY_USER, "e")
+    assert enabled == [True, True] and posted == []
+
+
+class NoTapListener(FakeListener):
+    tap = None
+
+
+def test_falls_back_to_listening_when_the_active_tap_cannot_be_made():
+    made = []
+
+    def factory(**kw):
+        made.append(NoTapListener(**kw) if "darwin_intercept" in kw else FakeListener(**kw))
+        return made[-1]
+
+    listener, full = mk.start_listener(HotkeyMachine("alt_r", "shift_r", "backspace"), print,
+                                       trusted=lambda: True, listener_cls=factory)
+    assert not full and "darwin_intercept" not in listener.kw and len(made) == 2
+
+
+def test_a_recording_stuck_for_five_minutes_is_stopped():
+    posted = []
+    clock = [1000.0]
+    router = KeyRouter(HotkeyMachine("alt_r", "shift_r", "backspace"), posted.append)
+    guard = mk.StuckKeyGuard(router, "alt_r", clock=lambda: clock[0])
+    router.post = guard.wrap(posted.append)
+    router.press("alt_r", False)
+    clock[0] += 299
+    guard.check()
+    assert posted == ["start"]
+    clock[0] += 2
+    guard.check()
+    assert posted == ["start", "stop"]
+    guard.check()
+    assert posted == ["start", "stop"]  # only once

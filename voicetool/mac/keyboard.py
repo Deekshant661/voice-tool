@@ -6,6 +6,7 @@ Without it macOS only allows listening, so dictation works but chords are not sw
 import ctypes
 import logging
 import os
+import time
 from typing import Callable
 
 from pynput import keyboard
@@ -46,8 +47,18 @@ def _read_quartz(event) -> tuple[int, int, int]:
             Quartz.CGEventGetIntegerValueField(event, _SOURCE_PID_FIELD))
 
 
-def make_intercept(router: KeyRouter, own_pid: int, read=_read_quartz):
+_TAP_DISABLED = {0xFFFFFFFE, 0xFFFFFFFF}  # by timeout (a slow moment, e.g. swapping), by user input
+MAX_RECORDING_S = 300
+
+
+def make_intercept(router: KeyRouter, own_pid: int, read=_read_quartz,
+                   reenable: Callable[[], None] = lambda: None):
     def intercept(event_type, event):
+        if event_type in _TAP_DISABLED:
+            # macOS switches a slow tap off and never back on; the hotkey would just go dead.
+            log.warning("macOS disabled the key listener (%#x); switching it back on", event_type)
+            reenable()
+            return event
         keycode, flags, source_pid = read(event)
         kind = classify(event_type, keycode, flags)
         if kind is None:
@@ -70,19 +81,73 @@ def _key_name(key) -> str:
     return getattr(key, "name", None) or f"vk{getattr(key, 'vk', None)}"
 
 
+class StuckKeyGuard:
+    """If the talk key's release is missed (secure input can swallow it), stop the recording
+    after MAX_RECORDING_S instead of recording forever."""
+
+    def __init__(self, router: KeyRouter, talk: str, clock: Callable[[], float] = time.monotonic,
+                 max_s: float = MAX_RECORDING_S):
+        self._router, self._talk, self._clock, self._max = router, talk, clock, max_s
+        self._since: float | None = None
+
+    def wrap(self, post: Callable[[str], None]) -> Callable[[str], None]:
+        def guarded(event: str) -> None:
+            if event == "start":
+                self._since = self._clock()
+            elif event in ("stop", "cancel"):
+                self._since = None
+            post(event)
+        return guarded
+
+    def check(self) -> None:
+        if self._since is not None and self._clock() - self._since >= self._max:
+            log.warning("talk key held for %d s: stopping the recording", self._max)
+            self._router.release(self._talk, False)
+
+
+class MacListener(keyboard.Listener):
+    """pynput's listener, keeping hold of its event tap so it can be switched back on."""
+    tap = None
+
+    def _create_event_tap(self):
+        self.tap = super()._create_event_tap()
+        return self.tap
+
+
+def _listen_only(router: KeyRouter, listener_cls):
+    return listener_cls(on_press=lambda k: router.press(_key_name(k), False),
+                        on_release=lambda k: router.release(_key_name(k), False))
+
+
 def start_listener(machine: HotkeyMachine, on_event: Callable[[str], None],
                    trusted: Callable[[], bool] = is_trusted,
-                   listener_cls=keyboard.Listener) -> tuple[object, bool]:
-    """Returns (listener, full_mode)."""
+                   listener_cls=MacListener) -> tuple[object, bool]:
+    """Returns (listener, full_mode). listener.guard must be checked periodically."""
     router = KeyRouter(machine, on_event)
+    guard = StuckKeyGuard(router, machine.talk)
+    router.post = guard.wrap(on_event)
+    listener = None
     if trusted():
-        listener = listener_cls(darwin_intercept=make_intercept(router, os.getpid()))
-        full = True
+        holder: dict = {}
+
+        def reenable():
+            import Quartz
+            Quartz.CGEventTapEnable(holder["l"].tap, True)
+
+        listener = listener_cls(darwin_intercept=make_intercept(router, os.getpid(),
+                                                                reenable=reenable))
+        holder["l"] = listener
+        listener.start()
+        getattr(listener, "wait", lambda: None)()  # the tap is made on the listener's thread
+        if listener.tap is None:
+            log.warning("Could not create the key tap: falling back to listening only")
+            getattr(listener, "stop", lambda: None)()
+            listener = None
     else:
         log.warning("Accessibility not granted: listening only, chords are not swallowed")
-        listener = listener_cls(on_press=lambda k: router.press(_key_name(k), False),
-                                on_release=lambda k: router.release(_key_name(k), False))
-        full = False
-    listener.router = router
-    listener.start()
+    full = listener is not None
+    if listener is None:
+        listener = _listen_only(router, listener_cls)
+        listener.start()
+    listener.router, listener.guard = router, guard
     return listener, full
