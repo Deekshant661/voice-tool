@@ -86,7 +86,7 @@ Same tool, Mac keys. Settings are in `config.mac.toml` (Windows keeps `config.to
 
 The menu bar shows `VT` when idle, `VT ●` while recording and `VT …` while transcribing. Click
 it for the same menu as the Windows tray. Speech runs on the Mac's GPU with
-`whisper-large-v3-turbo-q4` (464 MB), chosen because this Mac has 8 GB of RAM.
+`whisper-small.en-mlx` (470 MB): on his voice it was 3x faster than `large-v3-turbo-q4` (0.6 s vs 2.0 s for 8 s of speech) and made fewer mistakes.
 
 ### Setup
 
@@ -94,8 +94,8 @@ it for the same menu as the Windows tray. Speech runs on the Mac's GPU with
 brew install python@3.12 python-tk@3.12
 /opt/homebrew/bin/python3.12 -m venv ~/.voice-tool/venv
 ~/.voice-tool/venv/bin/pip install -r requirements-mac.txt
-HF_HUB_DISABLE_XET=1 ~/.voice-tool/venv/bin/hf download mlx-community/whisper-large-v3-turbo-q4 \
-  --local-dir ~/.voice-tool/models/whisper-large-v3-turbo-q4
+HF_HUB_DISABLE_XET=1 ~/.voice-tool/venv/bin/hf download mlx-community/whisper-small.en-mlx \
+  --local-dir ~/.voice-tool/models/whisper-small.en-mlx
 ```
 
 `HF_HUB_DISABLE_XET=1` matters: the newer download protocol stalled at 0 bytes on this network.

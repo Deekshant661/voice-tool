@@ -11,7 +11,7 @@ delete_last = "backspace"
 
 [model]
 # Folder name under ~/.voice-tool/models (an mlx-community Whisper model).
-name = "whisper-large-v3-turbo-q4"
+name = "whisper-small.en-mlx"
 idle_unload_minutes = 30
 keep_loaded = false
 
