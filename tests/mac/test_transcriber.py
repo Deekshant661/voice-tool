@@ -105,3 +105,22 @@ def test_pure_hallucination_on_silence_gives_nothing(fakes):
         {"text": " Thank you.", "no_speech_prob": 0.8}]}
     model, _ = transcriber.load_model(Config(model_name="whisper-small.en-mlx"))
     assert transcriber.transcribe(model, np.zeros(16000, np.float32), Config()) == ""
+
+
+@pytest.mark.mac
+def test_real_model_works_across_threads():
+    # The app loads on one thread, transcribes on the pipeline worker, releases on a timer.
+    import threading
+    import soundfile as sf
+    from voicetool.config import load_config
+    cfg = load_config()
+    audio, _ = sf.read(Path(__file__).parent / "speech_sample.wav", dtype="float32")
+    box = {}
+    def on_thread(fn):
+        t = threading.Thread(target=lambda: box.update(r=fn()))
+        t.start(); t.join()
+        return box.pop("r", None)
+    model, _ = on_thread(lambda: transcriber.load_model(cfg))
+    assert on_thread(lambda: transcriber.transcribe(model, audio, cfg)).strip()
+    assert on_thread(lambda: transcriber.transcribe(model, audio, cfg)).strip()
+    on_thread(lambda: transcriber.release(model))

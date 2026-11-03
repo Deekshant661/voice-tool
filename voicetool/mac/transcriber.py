@@ -1,6 +1,7 @@
 """mlx-whisper loading and transcription on Apple silicon. Same interface as the Windows
 transcriber, plus release(): MLX keeps the weights in a class-level holder and its own memory
 cache, so dropping our reference alone would leave the model in RAM."""
+from concurrent.futures import ThreadPoolExecutor
 from dataclasses import dataclass
 from pathlib import Path
 
@@ -13,12 +14,23 @@ from voicetool.config import MODELS_DIR, Config
 
 NO_SPEECH_MAX = 0.6  # same cut-off Whisper uses internally
 
+# MLX ties GPU streams to the thread that made them; the app loads, transcribes and releases
+# from different threads, so all MLX work runs on this one.
+_MLX = ThreadPoolExecutor(max_workers=1, thread_name_prefix="mlx")
+
+
+def _on_mlx(fn):
+    def run(*a, **kw):
+        return _MLX.submit(fn, *a, **kw).result()
+    return run
+
 
 @dataclass(frozen=True)
 class MlxModel:
     path: Path
 
 
+@_on_mlx
 def load_model(cfg: Config) -> tuple[MlxModel, str]:
     path = MODELS_DIR / cfg.model_name
     if not path.is_dir():
@@ -29,6 +41,7 @@ def load_model(cfg: Config) -> tuple[MlxModel, str]:
     return MlxModel(path), f"{cfg.model_name} (Apple GPU)"
 
 
+@_on_mlx
 def transcribe(model: MlxModel, audio: np.ndarray, cfg: Config) -> str:
     prompt = ", ".join(cfg.vocabulary) + "." if cfg.vocabulary else None
     # One short utterance at a time: carrying text between windows only invites repetition.
@@ -44,6 +57,7 @@ def transcribe(model: MlxModel, audio: np.ndarray, cfg: Config) -> str:
     return " ".join(t for t in kept if t)
 
 
+@_on_mlx
 def release(model: MlxModel | None = None) -> None:
     ModelHolder.model = None
     ModelHolder.model_path = None
