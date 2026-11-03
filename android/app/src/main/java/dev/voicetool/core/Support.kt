@@ -36,3 +36,9 @@ object AudioCtx {
         return rounded.coerceIn(512, 1500)
     }
 }
+
+/** A space before the dictation when the cursor sits right after a word. */
+object Spacing {
+    fun join(before: CharSequence?, text: String): String =
+        if (before.isNullOrEmpty() || before.last().isWhitespace()) text else " $text"
+}

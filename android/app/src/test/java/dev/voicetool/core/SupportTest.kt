@@ -80,3 +80,13 @@ class AudioCtxTest {
     @Test fun growsWithLongerSpeech() = assertEquals(1024, AudioCtx.forSamples(18 * 16000))
     @Test fun neverMoreThanTheFullWindow() = assertEquals(1500, AudioCtx.forSamples(60 * 16000))
 }
+
+class SpacingTest {
+    @Test fun startOfAnEmptyBox() = assertEquals("Hello", Spacing.join(null, "Hello"))
+    @Test fun afterAWordAddsASpace() = assertEquals(" Hello", Spacing.join("I said", "Hello"))
+    @Test fun afterASpaceOrNewLineAddsNothing() {
+        assertEquals("Hello", Spacing.join("I said ", "Hello"))
+        assertEquals("Hello", Spacing.join("line\n", "Hello"))
+    }
+    @Test fun emptyBeforeAddsNothing() = assertEquals("Hello", Spacing.join("", "Hello"))
+}
