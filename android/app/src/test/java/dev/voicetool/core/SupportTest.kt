@@ -72,3 +72,11 @@ class WavTest {
         assertArrayEquals(byteArrayOf(1, 0, -2, -1, 3, 0), wav.copyOfRange(44, 50))
     }
 }
+
+class AudioCtxTest {
+    // Whisper normally works on a fixed 30 s window (1500). Sized to the recording it ran 2x faster.
+    @Test fun neverSmallerThanTenSeconds() = assertEquals(512, AudioCtx.forSamples(16000))
+    @Test fun eightSecondsUsesTheSpikeValue() = assertEquals(512, AudioCtx.forSamples(8 * 16000))
+    @Test fun growsWithLongerSpeech() = assertEquals(1024, AudioCtx.forSamples(18 * 16000))
+    @Test fun neverMoreThanTheFullWindow() = assertEquals(1500, AudioCtx.forSamples(60 * 16000))
+}

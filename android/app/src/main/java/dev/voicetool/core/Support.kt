@@ -26,3 +26,13 @@ object Wav {
         return b.array()
     }
 }
+
+/** Whisper's encoder window. It defaults to a fixed 30 s (1500); sizing it to the recording ran
+ *  twice as fast on his phone. Floor of 512 (~10 s), the value tested for accuracy. */
+object AudioCtx {
+    fun forSamples(n: Int): Int {
+        val needed = n * 50 / SAMPLE_RATE
+        val rounded = (needed + 255) / 256 * 256
+        return rounded.coerceIn(512, 1500)
+    }
+}
