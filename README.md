@@ -72,3 +72,57 @@ $py = "$env:USERPROFILE\.voice-tool\venv\Scripts\python.exe"
 
 The `gpu` and `win` end-to-end test pastes a spoken sentence into a real window. Windows' own
 voice stands in for the microphone.
+
+## macOS
+
+Same tool, Mac keys. Settings are in `config.mac.toml` (Windows keeps `config.toml`).
+
+| Keys | What happens |
+|---|---|
+| Hold **Right Option**, speak, release | Dictate, and the text is pasted at the cursor |
+| Right Option + any other key | Normal shortcut. No dictation happens. |
+| **Right Option + Right Shift** | Open recent dictations |
+| **Right Option + Delete** | Delete the last recording |
+
+The menu bar shows `VT` when idle, `VT ●` while recording and `VT …` while transcribing. Click
+it for the same menu as the Windows tray. Speech runs on the Mac's GPU with
+`whisper-large-v3-turbo-q4` (464 MB), chosen because this Mac has 8 GB of RAM.
+
+### Setup
+
+```bash
+brew install python@3.12 python-tk@3.12
+/opt/homebrew/bin/python3.12 -m venv ~/.voice-tool/venv
+~/.voice-tool/venv/bin/pip install -r requirements-mac.txt
+HF_HUB_DISABLE_XET=1 ~/.voice-tool/venv/bin/hf download mlx-community/whisper-large-v3-turbo-q4 \
+  --local-dir ~/.voice-tool/models/whisper-large-v3-turbo-q4
+```
+
+`HF_HUB_DISABLE_XET=1` matters: the newer download protocol stalled at 0 bytes on this network.
+
+### Permissions
+
+macOS gives permissions to the app that **starts** the tool, here the terminal (Ghostty). In
+System Settings → Privacy & Security, turn the terminal on under:
+- **Microphone**, to record;
+- **Input Monitoring**, to see the Right Option key;
+- **Accessibility**, to paste with Cmd+V and to swallow the Option shortcuts.
+
+Quit and reopen the terminal after changing them. Without Accessibility the tool still starts,
+says so in a notification and in the log, and leaves text on the clipboard.
+
+### Run
+
+```bash
+cd ~/voice-tool/voice-tool && ~/.voice-tool/venv/bin/python -m voicetool
+```
+
+Quit from the menu bar. Recordings stay in `~/.voice-tool/data` on this Mac; nothing syncs.
+The log is `~/.voice-tool/voicetool.log`.
+
+### Tests
+
+```bash
+~/.voice-tool/venv/bin/python -m pytest          # fast unit tests
+~/.voice-tool/venv/bin/python -m pytest -m mac   # real pasteboard and real Whisper model
+```
