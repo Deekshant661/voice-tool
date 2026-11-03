@@ -46,6 +46,12 @@ class SetupActivity : Activity() {
             addView(column(
                 label("Voice Tool", 26f), status,
                 button("Allow the microphone") { requestPermissions(arrayOf(Manifest.permission.RECORD_AUDIO), 1) },
+                button("Turn on the mic bubble (Accessibility → Voice Tool mic bubble)") {
+                    startActivity(Intent(AndroidSettings.ACTION_ACCESSIBILITY_SETTINGS))
+                },
+                button("Keep the bubble alive (Battery → Don't optimise)") {
+                    startActivity(Intent(AndroidSettings.ACTION_IGNORE_BATTERY_OPTIMIZATION_SETTINGS))
+                },
                 button("Turn on the Voice Tool keyboard") { startActivity(Intent(AndroidSettings.ACTION_INPUT_METHOD_SETTINGS)) },
                 button("Switch keyboard now") { getSystemService(InputMethodManager::class.java).showInputMethodPicker() },
                 button("Recent dictations") { startActivity(Intent(this@SetupActivity, RecentActivity::class.java)) },
@@ -65,12 +71,15 @@ class SetupActivity : Activity() {
         val mic = checkSelfPermission(Manifest.permission.RECORD_AUDIO) == PackageManager.PERMISSION_GRANTED
         val enabled = getSystemService(InputMethodManager::class.java).enabledInputMethodList
             .any { it.packageName == packageName }
+        val bubble = (AndroidSettings.Secure.getString(contentResolver,
+            AndroidSettings.Secure.ENABLED_ACCESSIBILITY_SERVICES) ?: "").contains("$packageName/")
         val model = VoiceTool.settings(this).model
         val have = Models.NAMES.filter { Models.file(this, it).exists() }
         val store = VoiceTool.store(this)
         status.text = buildString {
             appendLine((if (mic) "✓" else "✗") + " Microphone " + if (mic) "allowed" else "not allowed")
-            appendLine((if (enabled) "✓" else "✗") + " Keyboard " + if (enabled) "turned on" else "not turned on")
+            appendLine((if (bubble) "✓" else "✗") + " Mic bubble " + if (bubble) "on" else "off")
+            appendLine((if (enabled) "✓" else "✗") + " Keyboard " + if (enabled) "turned on (optional)" else "off (optional)")
             appendLine((if (model in have) "✓" else "✗") + " Model $model " + if (model in have) "ready" else "missing")
             if (model !in have) appendLine("   Copy it from the Mac:\n   adb push ggml-$model-q5_1.bin ${Models.dir(this@SetupActivity)}/")
             appendLine("Recordings: %.1f MB".format(store.totalBytes() / 1e6))
