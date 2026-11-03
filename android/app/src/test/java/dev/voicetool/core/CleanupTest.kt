@@ -30,6 +30,9 @@ class CleanupTest {
     @Test fun unicodeSpacesCollapseLikePython() =
         assertEquals("Hello world", clean("hello\u00a0\u00a0world", f, emptyMap()))
 
+    @Test fun accentedLettersCountAsPartOfAWord() =
+        assertEquals("Umé stays", clean("umé stays", f, emptyMap()))
+
     @Test fun spaceBeforePunctuationRemoved() =
         assertEquals("Hello, world.", clean("hello , world .", f, emptyMap()))
 }
