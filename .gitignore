@@ -8,3 +8,6 @@ docs/
 handoff/
 .claude/
 CLAUDE.md
+
+# Real voice recordings used by hardware tests
+tests/mac/*.wav
