@@ -35,6 +35,7 @@ class FakeModels:
     def __init__(self, log, tick_result=True):
         self.log, self.tick_result = log, tick_result
         self.label, self.keep_loaded = "m (Apple GPU)", False
+        self.is_loaded = False
 
     def tick(self):
         self.log.append(("tick",))
@@ -58,22 +59,62 @@ def _app(log, tick_result=True):
     return a
 
 
-def test_quit_waits_for_a_dictation_in_progress_before_stopping():
-    log = []
-    _app(log).quit()
-    assert log == [("stop",), ("drain", 2.0), ("stop",)]  # listener, pipeline, menu bar
+class SlowPipeline:
+    logging = True
+
+    def __init__(self):
+        import threading
+        self.finish = threading.Event()
+        self.drained = False
+
+    def drain(self, timeout):
+        self.finish.wait(5)
+        self.drained = True
+
+
+class FakeBar:
+    def __init__(self):
+        self.queued, self.stopped, self.states = [], False, []
+
+    def call_soon(self, fn):
+        self.queued.append(fn)
+
+    def set_state(self, state):
+        self.states.append(state)
+
+    def stop(self):
+        self.stopped = True
+
+
+def test_quit_waits_for_the_dictation_in_progress_however_long_it_takes():
+    import time
+    log, bar, pipeline = [], FakeBar(), SlowPipeline()
+    a = mac_app.MacApp(Config(), FakeStore(), FakeModels(log), pipeline, bar=bar,
+                       launcher=Recorder(log), listener=Recorder(log), release=lambda: None)
+    a.quit()
+    assert ("stop",) in log  # no new dictations
+    time.sleep(0.1)
+    assert bar.queued == [] and not bar.stopped  # still finishing: the app stays up
+    pipeline.finish.set()
+    for _ in range(50):
+        if bar.queued:
+            break
+        time.sleep(0.02)
+    for fn in bar.queued:
+        fn()
+    assert pipeline.drained and bar.stopped
 
 
 def test_idle_unload_also_frees_mlx_memory():
     log = []
     _app(log).tick()
-    assert log == [("tick",), ("release",)]
+    assert log == [("tick",), ("release",), ("check",)]
 
 
 def test_no_release_when_nothing_was_unloaded():
     log = []
     _app(log, tick_result=False).tick()
-    assert log == [("tick",)]
+    assert log == [("tick",), ("check",)]
 
 
 def test_unload_now_frees_mlx_memory_off_the_main_thread():
@@ -103,3 +144,25 @@ def test_python_m_voicetool_starts_the_mac_app(monkeypatch):
     monkeypatch.setattr(sys, "platform", "darwin")
     runpy.run_module("voicetool", run_name="__main__")
     assert started == ["mac"]
+
+
+def test_memory_is_not_freed_if_a_dictation_reloaded_the_model_meanwhile():
+    log = []
+    a = _app(log)
+    a.models.is_loaded = True
+    a.tick()
+    assert log == [("tick",), ("check",)]
+
+
+def test_every_tick_checks_for_a_stuck_talk_key():
+    log = []
+    _app(log, tick_result=False).tick()
+    assert ("check",) in log
+
+
+def test_correction_window_starts_from_the_repo_folder(monkeypatch):
+    from voicetool.mac import corrections
+    calls = []
+    monkeypatch.setattr(corrections.subprocess, "Popen", lambda args, **kw: calls.append(kw))
+    corrections._spawn()
+    assert calls[0]["cwd"] == str(corrections.REPO)

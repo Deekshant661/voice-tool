@@ -34,8 +34,13 @@ def child_main(data_dir: Path, root: tk.Tk | None = None) -> None:
         root.destroy()
 
 
+REPO = Path(__file__).resolve().parent.parent.parent
+
+
 def _spawn() -> subprocess.Popen:
-    return subprocess.Popen([sys.executable, "-m", "voicetool.mac.corrections", str(DATA_DIR)])
+    # cwd: "-m voicetool..." only resolves from the repo, whatever folder the app started in.
+    return subprocess.Popen([sys.executable, "-m", "voicetool.mac.corrections", str(DATA_DIR)],
+                            cwd=str(REPO))
 
 
 class CorrectionsLauncher:

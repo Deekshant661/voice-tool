@@ -88,3 +88,20 @@ def test_real_model_transcribes_speech():
     model, _ = transcriber.load_model(cfg)
     assert transcriber.transcribe(model, audio, cfg).strip()
     transcriber.release(model)
+
+
+def test_segments_whisper_rates_as_not_speech_are_dropped(fakes):
+    mw, _, _ = fakes
+    mw.transcribe = lambda audio, **kw: {"text": " Deploy it. Thank you.", "segments": [
+        {"text": " Deploy it.", "no_speech_prob": 0.05},
+        {"text": " Thank you.", "no_speech_prob": 0.92}]}
+    model, _ = transcriber.load_model(Config(model_name="whisper-small.en-mlx"))
+    assert transcriber.transcribe(model, np.zeros(16000, np.float32), Config()) == "Deploy it."
+
+
+def test_pure_hallucination_on_silence_gives_nothing(fakes):
+    mw, _, _ = fakes
+    mw.transcribe = lambda audio, **kw: {"text": " Thank you.", "segments": [
+        {"text": " Thank you.", "no_speech_prob": 0.8}]}
+    model, _ = transcriber.load_model(Config(model_name="whisper-small.en-mlx"))
+    assert transcriber.transcribe(model, np.zeros(16000, np.float32), Config()) == ""

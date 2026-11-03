@@ -122,7 +122,7 @@ def _listen_only(router: KeyRouter, listener_cls):
 def start_listener(machine: HotkeyMachine, on_event: Callable[[str], None],
                    trusted: Callable[[], bool] = is_trusted,
                    listener_cls=MacListener) -> tuple[object, bool]:
-    """Returns (listener, full_mode). listener.guard must be checked periodically."""
+    """Returns (listener, full_mode). Call listener.check() periodically (stuck-key guard)."""
     router = KeyRouter(machine, on_event)
     guard = StuckKeyGuard(router, machine.talk)
     router.post = guard.wrap(on_event)
@@ -149,5 +149,5 @@ def start_listener(machine: HotkeyMachine, on_event: Callable[[str], None],
     if listener is None:
         listener = _listen_only(router, listener_cls)
         listener.start()
-    listener.router, listener.guard = router, guard
+    listener.router, listener.check = router, guard.check
     return listener, full

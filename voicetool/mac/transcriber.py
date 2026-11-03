@@ -11,6 +11,8 @@ from mlx_whisper.transcribe import ModelHolder
 
 from voicetool.config import MODELS_DIR, Config
 
+NO_SPEECH_MAX = 0.6  # same cut-off Whisper uses internally
+
 
 @dataclass(frozen=True)
 class MlxModel:
@@ -33,7 +35,13 @@ def transcribe(model: MlxModel, audio: np.ndarray, cfg: Config) -> str:
     result = mlx_whisper.transcribe(audio, path_or_hf_repo=str(model.path), language=cfg.language,
                                     initial_prompt=prompt, condition_on_previous_text=False,
                                     verbose=None)
-    return result["text"].strip()
+    if "segments" not in result:
+        return result["text"].strip()
+    # No VAD here (faster-whisper had one): on near-silence Whisper invents "Thank you." and
+    # usually knows it, so drop what it rates as probably not speech.
+    kept = [s["text"].strip() for s in result["segments"]
+            if s.get("no_speech_prob", 0) <= NO_SPEECH_MAX]
+    return " ".join(t for t in kept if t)
 
 
 def release(model: MlxModel | None = None) -> None:

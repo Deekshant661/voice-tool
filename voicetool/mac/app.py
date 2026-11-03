@@ -14,7 +14,8 @@ from voicetool.config import APP_DIR, DATA_DIR, Config
 LOG_PATH = APP_DIR / "voicetool.log"
 LOCK_PATH = APP_DIR / "voicetool.lock"
 TICK_S = 30
-QUIT_WAIT_S = 2.0
+# A dictation in progress is never cut off by Quit: it may be mid-paste holding the clipboard.
+QUIT_WAIT_S = 3600.0
 SOUNDS = {"start": "/System/Library/Sounds/Pop.aiff", "stop": "/System/Library/Sounds/Tink.aiff"}
 log = logging.getLogger("voicetool")
 
@@ -68,13 +69,16 @@ class MacApp:
         self.models.keep_loaded = not self.models.keep_loaded
 
     def tick(self) -> None:
-        if self.models.tick():
+        # A dictation can reload the model between the unload and here; then keep it.
+        if self.models.tick() and not self.models.is_loaded:
             self._release()
+        self.listener.check()
 
     def unload(self, wait: bool = False) -> None:
         def run():
             self.models.unload()  # waits for any dictation in progress
-            self._release()
+            if not self.models.is_loaded:
+                self._release()
         t = threading.Thread(target=run, daemon=True)
         t.start()
         if wait:
@@ -87,9 +91,14 @@ class MacApp:
         self.launcher.open()
 
     def quit(self) -> None:
+        """Stops new dictations at once; the app exits when the current one is finished."""
         self.listener.stop()
-        self.pipeline.drain(QUIT_WAIT_S)  # let a dictation finish pasting and restore the clipboard
-        self.bar.stop()
+
+        def finish():
+            self.pipeline.drain(QUIT_WAIT_S)
+            self.bar.call_soon(self.bar.stop)  # AppKit: only from the main thread
+
+        threading.Thread(target=finish, daemon=True, name="quit").start()
 
 
 def main() -> None:
