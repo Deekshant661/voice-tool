@@ -34,7 +34,8 @@ def _deliver(board, target=7, current=7, secure=False, during_wait=None):
             during_wait()
 
     result = paste.deliver("hello", target, board=board, current_pid=lambda: current,
-                           secure=lambda: secure, send=lambda: sent.append("cmd+v"), sleep=sleep)
+                           secure=lambda: secure, send=lambda: sent.append("cmd+v"), sleep=sleep,
+                           trusted=lambda: True)
     return result, sent
 
 
@@ -91,7 +92,7 @@ def test_clipboard_is_restored_even_if_sending_keys_fails():
 
     with pytest.raises(RuntimeError):
         paste.deliver("hello", 7, board=board, current_pid=lambda: 7, secure=lambda: False,
-                      send=boom, sleep=lambda s: None)
+                      send=boom, sleep=lambda s: None, trusted=lambda: True)
     assert board.items[0]["public.utf8-plain-text"] == b"old secret"
 
 
@@ -112,3 +113,31 @@ def test_real_pasteboard_round_trip_keeps_every_type():
         assert board.snapshot()[0]["public.rtf"] == b"{\\rtf1 two}"
     finally:
         board.restore(original)
+
+
+def test_without_accessibility_the_text_stays_on_the_clipboard():
+    board = FakeBoard()
+    sent = []
+    result = paste.deliver("hello", 7, board=board, current_pid=lambda: 7, secure=lambda: False,
+                           send=lambda: sent.append("cmd+v"), sleep=lambda s: None,
+                           trusted=lambda: False)
+    assert result is PasteResult.COPIED_ELEVATED and sent == []
+    assert board.items[0]["public.utf8-plain-text"] == b"hello"
+
+
+def test_elevated_notice_mentions_accessibility():
+    assert "Accessibility" in paste.MAC_NOTICES[PasteResult.COPIED_ELEVATED]
+
+
+def test_a_different_window_of_the_same_app_counts_as_focus_moved():
+    assert paste.decide((7, 100), (7, 200), False) is PasteResult.COPIED_FOCUS_MOVED
+    assert paste.decide((7, 100), (7, 100), False) is PasteResult.PASTED
+
+
+def test_front_window_is_the_first_normal_window_of_that_app():
+    windows = [{"kCGWindowOwnerPID": 9, "kCGWindowLayer": 0, "kCGWindowNumber": 1},
+               {"kCGWindowOwnerPID": 7, "kCGWindowLayer": 25, "kCGWindowNumber": 2},  # menu
+               {"kCGWindowOwnerPID": 7, "kCGWindowLayer": 0, "kCGWindowNumber": 3},
+               {"kCGWindowOwnerPID": 7, "kCGWindowLayer": 0, "kCGWindowNumber": 4}]
+    assert paste.front_window(7, windows) == 3
+    assert paste.front_window(5, windows) == 0

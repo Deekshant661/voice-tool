@@ -14,7 +14,8 @@ _PRIVATE_TYPES = ("org.nspasteboard.ConcealedType", "org.nspasteboard.TransientT
 
 MAC_NOTICES = {
     PasteResult.COPIED_FOCUS_MOVED: "Copied — the app changed, paste it with Cmd+V",
-    PasteResult.COPIED_ELEVATED: "Copied — secure typing is on (password field?), use Cmd+V",
+    PasteResult.COPIED_ELEVATED: "Copied — can't type here (password field, or Accessibility is "
+                                 "off for the terminal). Paste it with Cmd+V",
 }
 
 
@@ -71,13 +72,38 @@ class Pasteboard:
         self.restore([text_item(text, private)])
 
 
-def foreground() -> tuple[int, str, str]:
+def front_window(pid: int, windows: list[dict]) -> int:
+    """Window number of the app's frontmost normal window (the list is front-to-back)."""
+    for w in windows:
+        if w.get("kCGWindowOwnerPID") == pid and w.get("kCGWindowLayer") == 0:
+            return w.get("kCGWindowNumber", 0)
+    return 0
+
+
+def _onscreen_windows() -> list[dict]:
+    import Quartz
+    return list(Quartz.CGWindowListCopyWindowInfo(
+        Quartz.kCGWindowListOptionOnScreenOnly | Quartz.kCGWindowListExcludeDesktopElements,
+        Quartz.kCGNullWindowID) or [])
+
+
+def current_target() -> tuple[int, int]:
+    """(pid, window number): tells apart two windows of the same app, not two tabs of one."""
     from AppKit import NSWorkspace
     app = NSWorkspace.sharedWorkspace().frontmostApplication()
     if app is None:
-        return 0, "", ""
+        return 0, 0
+    pid = app.processIdentifier()
+    return pid, front_window(pid, _onscreen_windows())
+
+
+def foreground() -> tuple[tuple[int, int], str, str]:
+    from AppKit import NSWorkspace
+    app = NSWorkspace.sharedWorkspace().frontmostApplication()
+    if app is None:
+        return (0, 0), "", ""
     # Window titles need extra permissions; the app's bundle id is enough to know where it went.
-    return app.processIdentifier(), "", app.bundleIdentifier() or app.localizedName() or ""
+    return current_target(), "", app.bundleIdentifier() or app.localizedName() or ""
 
 
 def secure_input_on() -> bool:
@@ -94,14 +120,23 @@ def send_cmd_v() -> None:
         kb.release("v")
 
 
-def deliver(text: str, target_pid: int, board=None,
-            current_pid: Callable[[], int] = lambda: foreground()[0],
+def _trusted() -> bool:
+    from voicetool.mac.keyboard import is_trusted
+    return is_trusted()
+
+
+def deliver(text: str, target_pid, board=None,
+            current_pid: Callable[[], object] = current_target,
             secure: Callable[[], bool] = secure_input_on,
             send: Callable[[], None] = send_cmd_v,
-            sleep: Callable[[float], None] = time.sleep) -> PasteResult:
+            sleep: Callable[[float], None] = time.sleep,
+            trusted: Callable[[], bool] = _trusted) -> PasteResult:
     board = board or Pasteboard()
     current = current_pid()
-    result = decide(target_pid, current, secure() if target_pid == current else False)
+    # Without Accessibility macOS drops our Cmd+V without a word; restoring afterwards would
+    # then wipe the dictation off the clipboard too.
+    blocked = target_pid == current and (not trusted() or secure())
+    result = decide(target_pid, current, blocked)
     if result is not PasteResult.PASTED:
         board.write_text(text, private=True)  # left there on purpose for the user to paste
         return result
