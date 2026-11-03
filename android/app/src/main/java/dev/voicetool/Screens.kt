@@ -9,6 +9,7 @@ import android.content.pm.PackageManager
 import android.media.MediaPlayer
 import android.os.Bundle
 import android.provider.Settings as AndroidSettings
+import android.view.WindowInsets
 import android.view.inputmethod.InputMethodManager
 import android.widget.ArrayAdapter
 import android.widget.Button
@@ -25,8 +26,18 @@ import dev.voicetool.core.Settings
 
 private fun Context.column(vararg views: android.view.View) = LinearLayout(this).apply {
     orientation = LinearLayout.VERTICAL
-    setPadding(40, 60, 40, 40)
     views.forEach { addView(it) }
+}
+
+/** Android 15+ draws the app behind the status and navigation bars: keep content out from under
+ *  them (and the camera cutout), plus our own margin. */
+private fun Activity.show(content: android.view.View) {
+    content.setOnApplyWindowInsetsListener { v, insets ->
+        val bars = insets.getInsets(WindowInsets.Type.systemBars() or WindowInsets.Type.displayCutout())
+        v.setPadding(bars.left + 40, bars.top + 24, bars.right + 40, bars.bottom + 24)
+        insets
+    }
+    setContentView(content)
 }
 
 private fun Context.label(text: String, size: Float = 16f) =
@@ -42,7 +53,7 @@ class SetupActivity : Activity() {
     override fun onCreate(savedInstanceState: Bundle?) {
         super.onCreate(savedInstanceState)
         status = label("", 17f)
-        setContentView(ScrollView(this).apply {
+        show(ScrollView(this).apply {
             addView(column(
                 label("Voice Tool", 26f), status,
                 button("Allow the microphone") { requestPermissions(arrayOf(Manifest.permission.RECORD_AUDIO), 1) },
@@ -97,8 +108,10 @@ class RecentActivity : Activity() {
 
     override fun onCreate(savedInstanceState: Bundle?) {
         super.onCreate(savedInstanceState)
-        list = ListView(this)
-        setContentView(column(label("Fix words Whisper misheard. Don't reword.", 17f), list))
+        list = ListView(this).apply {
+            layoutParams = LinearLayout.LayoutParams(LinearLayout.LayoutParams.MATCH_PARENT, 0, 1f)  // fill below the header
+        }
+        show(column(label("Recent dictations", 24f), label("Tap one to fix words Whisper misheard. Don't reword."), list))
         list.setOnItemClickListener { _, _, i, _ -> edit(rows[i]) }
         refresh()
     }
@@ -162,7 +175,7 @@ class SettingsActivity : Activity() {
             })
         }
         val save = CheckBox(this).apply { text = "Save recordings (training data)"; isChecked = current.saveRecordings }
-        setContentView(ScrollView(this).apply {
+        show(ScrollView(this).apply {
             addView(column(
                 label("Settings", 24f),
                 label("Words Whisper should spell your way (comma separated)"), vocab,
