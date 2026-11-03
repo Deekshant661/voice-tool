@@ -3,8 +3,6 @@ import ctypes
 import struct
 import time
 from ctypes import wintypes
-from enum import Enum
-
 import win32api
 import win32clipboard
 import win32con
@@ -12,6 +10,8 @@ import win32gui
 import win32process
 import win32security
 from pynput.keyboard import Controller, Key
+
+from voicetool.paste_result import PasteResult  # noqa: F401  (re-exported for callers)
 
 PROCESS_QUERY_LIMITED_INFORMATION = 0x1000
 # The target app reads the clipboard some time after it handles Ctrl+V. Electron apps under load,
@@ -26,12 +26,6 @@ _PRIVATE_FORMATS = {
     "CanIncludeInClipboardHistory": struct.pack("<I", 0),
     "CanUploadToCloudClipboard": struct.pack("<I", 0),
 }
-
-
-class PasteResult(Enum):
-    PASTED = "pasted"
-    COPIED_FOCUS_MOVED = "copied_focus_moved"
-    COPIED_ELEVATED = "copied_elevated"
 
 
 def decide(target_hwnd: int, current_hwnd: int, target_elevated: bool) -> PasteResult:

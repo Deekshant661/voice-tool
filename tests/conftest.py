@@ -1,6 +1,12 @@
+import sys
 import tkinter as tk
 
 import pytest
+
+# Test files that import the other platform's libraries can't even be collected.
+_WINDOWS_ONLY = ["test_app.py", "test_autostart.py", "test_end_to_end.py", "test_paste.py",
+                 "test_transcriber.py", "test_transcriber_gpu.py", "test_tray.py"]
+collect_ignore = _WINDOWS_ONLY if sys.platform == "darwin" else ["mac"]
 
 
 @pytest.fixture(scope="session")

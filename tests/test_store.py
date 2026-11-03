@@ -1,3 +1,6 @@
+import sys
+
+import pytest
 import numpy as np
 import soundfile as sf
 
@@ -55,6 +58,7 @@ def test_delete_last_when_audio_file_is_locked(tmp_path):
     assert st.recent(5) == []
 
 
+@pytest.mark.skipif(sys.platform == "darwin", reason="macOS lets an open file be deleted")
 def test_leftover_audio_is_removed_on_next_start(tmp_path):
     st = Store(tmp_path)
     st.add(_audio(), "secret", "Secret", "", "")

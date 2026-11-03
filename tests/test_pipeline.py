@@ -7,7 +7,7 @@ import numpy as np
 from voicetool.config import Config
 from voicetool.pipeline import Pipeline
 from voicetool.recorder import RecorderError
-from voicetool.win.paste import PasteResult
+from voicetool.paste_result import PasteResult
 
 SR = 16000
 

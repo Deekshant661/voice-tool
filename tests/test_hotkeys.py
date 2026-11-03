@@ -1,3 +1,4 @@
+import sys
 from types import SimpleNamespace
 
 import pytest
@@ -66,6 +67,7 @@ def test_second_extra_key_does_not_cancel_twice():
 
 # --- vk names (the hook reports virtual-key codes) ---
 
+@pytest.mark.skipif(sys.platform == "darwin", reason="Windows virtual-key codes / file locking")
 def test_name_for_vk():
     assert name_for_vk(0xA3) == "ctrl_r"
     assert name_for_vk(0xA2) == "ctrl_l"
@@ -130,6 +132,7 @@ def _data(vk, injected=False):
     return SimpleNamespace(vkCode=vk, flags=0x10 if injected else 0)
 
 
+@pytest.mark.skipif(sys.platform == "darwin", reason="Windows virtual-key codes / file locking")
 def test_filter_routes_and_suppresses():
     events, suppressed = [], []
     f = make_filter(KeyRouter(mk(), events.append), lambda: suppressed.append(1))
@@ -141,6 +144,7 @@ def test_filter_routes_and_suppresses():
     assert events == ["start", "cancel", "delete_last"] and suppressed == [1, 1]
 
 
+@pytest.mark.skipif(sys.platform == "darwin", reason="Windows virtual-key codes / file locking")
 def test_filter_handles_syskey_messages():
     events = []
     f = make_filter(KeyRouter(mk(), events.append), lambda: None)

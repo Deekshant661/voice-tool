@@ -1,0 +1,33 @@
+# Voice Tool settings for macOS. Restart the app after editing.
+# (Windows reads config.toml instead.)
+
+[hotkeys]
+# Hold to talk. MacBooks have no Right Ctrl, so Right Option. Names follow pynput.
+talk = "alt_r"
+# Pressed while holding the talk key.
+corrections = "shift_r"
+# The Mac "delete" key is backspace to pynput.
+delete_last = "backspace"
+
+[model]
+# Folder name under ~/.voice-tool/models (an mlx-community Whisper model).
+name = "whisper-large-v3-turbo-q4"
+idle_unload_minutes = 30
+keep_loaded = false
+
+[dictation]
+min_seconds = 0.3
+language = "en"
+# Part of the microphone's name. Empty = the macOS default input.
+input_device = ""
+vocabulary = ["Vezras", "RDS", "pm2", "GitLab", "Postgres", "AWS", "Claude", "Jarvis"]
+
+[cleanup]
+fillers = ["um", "uh", "uhm", "erm", "hmm"]
+
+[cleanup.replacements]
+"pm 2" = "pm2"
+
+[data]
+logging = true
+warn_gb = 5

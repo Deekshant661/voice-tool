@@ -1,15 +1,22 @@
 """Settings loaded from config.toml, with defaults for anything missing."""
-import os
+import sys
 import tomllib
 from dataclasses import dataclass, field
 from pathlib import Path
 
 # Heavy files (venv, model, recordings) live outside OneDrive and outside AppData:
 # packaged apps get AppData redirected into a private sandbox.
-APP_DIR = Path(os.environ["USERPROFILE"]) / ".voice-tool"
+APP_DIR = Path.home() / ".voice-tool"
 MODELS_DIR = APP_DIR / "models"
 DATA_DIR = APP_DIR / "data"
-CONFIG_PATH = Path(__file__).resolve().parent.parent / "config.toml"
+_REPO = Path(__file__).resolve().parent.parent
+
+
+def config_path_for(platform: str) -> Path:
+    return _REPO / ("config.mac.toml" if platform == "darwin" else "config.toml")
+
+
+CONFIG_PATH = config_path_for(sys.platform)
 
 
 @dataclass(frozen=True)

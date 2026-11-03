@@ -11,8 +11,8 @@ from typing import Callable
 
 from voicetool.cleanup import clean
 from voicetool.config import Config
+from voicetool.paste_result import PasteResult
 from voicetool.recorder import RecorderError, is_silent, too_short
-from voicetool.win.paste import PasteResult
 
 log = logging.getLogger("voicetool")
 
@@ -26,8 +26,10 @@ _DELETE_LAST = object()
 class Pipeline:
     def __init__(self, cfg: Config, recorder, models, store, deliver_fn, foreground_fn,
                  transcribe_fn, notify: Callable[[str], None], beep: Callable[[str], None],
-                 on_state: Callable[[str], None] = lambda state: None):
+                 on_state: Callable[[str], None] = lambda state: None,
+                 notices: dict[PasteResult, str] | None = None):
         self.cfg = cfg
+        self.notices = _NOTICES if notices is None else notices
         self.recorder = recorder
         self.models = models
         self.store = store
@@ -163,8 +165,8 @@ class Pipeline:
             return
         log.info("dictation: %.2f s audio, %d chars, %s in %.2f s", seconds, len(text),
                  result.value, time.monotonic() - started)
-        if result in _NOTICES:
-            self.notify(_NOTICES[result])
+        if result in self.notices:
+            self.notify(self.notices[result])
         self._save(audio, raw, text, title, process)
 
     def _save(self, audio, raw, text, title, process) -> None:
