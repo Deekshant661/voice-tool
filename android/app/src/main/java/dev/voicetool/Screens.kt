@@ -67,16 +67,42 @@ class SetupActivity : Activity() {
                 button("Switch keyboard now") { getSystemService(InputMethodManager::class.java).showInputMethodPicker() },
                 button("Recent dictations") { startActivity(Intent(this@SetupActivity, RecentActivity::class.java)) },
                 button("Settings") { startActivity(Intent(this@SetupActivity, SettingsActivity::class.java)) },
+                button("Export recordings (zip; keep it before any uninstall)") {
+                    startActivityForResult(Intent(Intent.ACTION_CREATE_DOCUMENT).addCategory(Intent.CATEGORY_OPENABLE)
+                        .setType("application/zip")
+                        .putExtra(Intent.EXTRA_TITLE, "voice-tool-export-${java.time.LocalDate.now()}.zip"), EXPORT)
+                },
             ))
         })
     }
 
     override fun onResume() { super.onResume(); refresh() }
 
+    @Deprecated("Fine for one plain file picker")
+    override fun onActivityResult(code: Int, result: Int, data: Intent?) {
+        super.onActivityResult(code, result, data)
+        val uri = data?.data
+        if (code != EXPORT || result != RESULT_OK || uri == null) return
+        Toast.makeText(this, "Exporting…", Toast.LENGTH_SHORT).show()
+        Thread {
+            val msg = try {
+                val store = VoiceTool.store(this)
+                val rows = store.recent(Int.MAX_VALUE).map { it.toRow() }
+                val n = contentResolver.openOutputStream(uri)!!.use { out ->
+                    dev.voicetool.core.Export.write(out, rows, store::audioFile)
+                }
+                "Exported $n recordings"
+            } catch (e: Exception) { "Export failed: ${e.message}" }
+            runOnUiThread { Toast.makeText(this, msg, Toast.LENGTH_LONG).show() }
+        }.start()
+    }
+
     override fun onRequestPermissionsResult(code: Int, perms: Array<out String>, results: IntArray) {
         super.onRequestPermissionsResult(code, perms, results)
         refresh()
     }
+
+    private companion object { const val EXPORT = 7 }
 
     private fun refresh() {
         val mic = checkSelfPermission(Manifest.permission.RECORD_AUDIO) == PackageManager.PERMISSION_GRANTED

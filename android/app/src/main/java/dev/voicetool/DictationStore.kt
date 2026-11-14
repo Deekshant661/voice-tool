@@ -17,6 +17,12 @@ data class Dictation(
 
 /** Training-data store: one WAV per dictation plus a SQLite index, in the shared data format
  *  (same columns as the desktop `dictations` table, plus `device`). */
+/** The shared data format, as written to the export. */
+fun Dictation.toRow(): Map<String, Any?> = linkedMapOf(
+    "id" to id, "created_at" to createdAt, "audio_path" to audioPath, "duration_s" to durationS,
+    "raw_text" to rawText, "cleaned_text" to cleanedText, "corrected_text" to correctedText,
+    "window_title" to windowTitle, "process_name" to processName, "device" to device)
+
 class DictationStore(private val dir: File) : Store {
     private val audioDir = File(dir, "audio").apply { mkdirs() }
     private val db = SQLiteDatabase.openOrCreateDatabase(File(dir, "dictations.db"), null).apply {
@@ -65,7 +71,8 @@ class DictationStore(private val dir: File) : Store {
         }.toList()
     }
 
-    fun audioFile(d: Dictation) = File(audioDir, d.audioPath)
+    fun audioFile(d: Dictation) = audioFile(d.audioPath)
+    fun audioFile(name: String) = File(audioDir, name)
 
     @Synchronized
     fun setCorrection(id: Long, text: String) {
