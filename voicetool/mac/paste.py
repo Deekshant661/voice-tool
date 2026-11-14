@@ -125,12 +125,39 @@ def _trusted() -> bool:
     return is_trusted()
 
 
+def join(before: str | None, text: str) -> str:
+    """Same rule as the phone: a space when dictating straight after a word."""
+    return text if not before or before[-1].isspace() else " " + text
+
+
+def before_cursor() -> str | None:
+    """The character just before the cursor in the focused text box, via Accessibility.
+    None when the app doesn't say (Terminal, some Electron apps): then we add nothing."""
+    try:
+        import ApplicationServices as AX
+        err, el = AX.AXUIElementCopyAttributeValue(AX.AXUIElementCreateSystemWide(),
+                                                   "AXFocusedUIElement", None)
+        if err or el is None:
+            return None
+        err, value = AX.AXUIElementCopyAttributeValue(el, "AXValue", None)
+        err2, rng = AX.AXUIElementCopyAttributeValue(el, "AXSelectedTextRange", None)
+        if err or err2 or not isinstance(value, str) or rng is None:
+            return None
+        ok, r = AX.AXValueGetValue(rng, AX.kAXValueCFRangeType, None)
+        if not ok:
+            return None
+        return value[max(0, r.location - 1):r.location]
+    except Exception:
+        return None
+
+
 def deliver(text: str, target_pid, board=None,
             current_pid: Callable[[], object] = current_target,
             secure: Callable[[], bool] = secure_input_on,
             send: Callable[[], None] = send_cmd_v,
             sleep: Callable[[float], None] = time.sleep,
-            trusted: Callable[[], bool] = _trusted) -> PasteResult:
+            trusted: Callable[[], bool] = _trusted,
+            before_cursor: Callable[[], str | None] = before_cursor) -> PasteResult:
     board = board or Pasteboard()
     current = current_pid()
     # Without Accessibility macOS drops our Cmd+V without a word; restoring afterwards would
@@ -140,6 +167,7 @@ def deliver(text: str, target_pid, board=None,
     if result is not PasteResult.PASTED:
         board.write_text(text, private=True)  # left there on purpose for the user to paste
         return result
+    text = join(before_cursor(), text)
     snap = board.snapshot()
     board.write_text(text, private=True)
     ours = board.change_count()

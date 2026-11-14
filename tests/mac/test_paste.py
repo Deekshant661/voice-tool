@@ -141,3 +141,25 @@ def test_front_window_is_the_first_normal_window_of_that_app():
                {"kCGWindowOwnerPID": 7, "kCGWindowLayer": 0, "kCGWindowNumber": 4}]
     assert paste.front_window(7, windows) == 3
     assert paste.front_window(5, windows) == 0
+
+
+def test_spacing_rule_matches_the_phone():
+    assert paste.join(None, "Okay.") == "Okay."          # cursor unknown: leave it alone
+    assert paste.join("", "Okay.") == "Okay."            # empty box
+    assert paste.join("Mac.", "Okay.") == " Okay."       # right after a word
+    assert paste.join("Mac. ", "Okay.") == "Okay."       # already a space
+    assert paste.join("line\n", "Okay.") == "Okay."
+
+
+def test_a_space_is_added_after_earlier_text():
+    board, typed = FakeBoard(), []
+    board.write_text = lambda text, private: typed.append(text)
+    paste.deliver("Okay.", 7, board=board, current_pid=lambda: 7, secure=lambda: False,
+                  send=lambda: None, sleep=lambda s: None, trusted=lambda: True,
+                  before_cursor=lambda: "on my Mac.")
+    assert typed == [" Okay."]
+
+
+@pytest.mark.mac
+def test_real_before_cursor_never_crashes():
+    assert paste.before_cursor() is None or isinstance(paste.before_cursor(), str)
