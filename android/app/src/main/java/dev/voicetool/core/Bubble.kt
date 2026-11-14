@@ -25,9 +25,11 @@ class BubbleGesture(private val slopPx: Float) {
     private var x0 = 0f
     private var y0 = 0f
     private var dragging = false
+    private var downAt = 0L
+    private var lastTapAt: Long? = null  // end of the last short tap, waiting for a second one
 
-    fun down(x: Float, y: Float): List<String> {
-        x0 = x; y0 = y; dragging = false
+    fun down(x: Float, y: Float, atMs: Long = 0): List<String> {
+        x0 = x; y0 = y; dragging = false; downAt = atMs
         return listOf("press")
     }
 
@@ -37,5 +39,17 @@ class BubbleGesture(private val slopPx: Float) {
         else -> emptyList()
     }
 
-    fun up(): List<String> = listOf(if (dragging) "dropped" else "release")
+    fun up(atMs: Long = 0): List<String> {
+        if (dragging) { lastTapAt = null; return listOf("dropped") }
+        val tap = atMs - downAt < TAP_MS
+        val double = tap && lastTapAt?.let { downAt - it < GAP_MS } == true
+        lastTapAt = if (tap && !double) atMs else null
+        // The short "release" is harmless: too short to transcribe, so nothing is saved.
+        return if (double) listOf("release", "delete_last") else listOf("release")
+    }
+
+    private companion object {
+        const val TAP_MS = 250L
+        const val GAP_MS = 400L
+    }
 }

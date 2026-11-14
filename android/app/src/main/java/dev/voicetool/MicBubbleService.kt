@@ -78,9 +78,9 @@ class MicBubbleService : AccessibilityService(), TextSink {
             text = "🎙"; textSize = 22f; gravity = Gravity.CENTER
             setOnTouchListener { _, e ->
                 val events = when (e.actionMasked) {
-                    MotionEvent.ACTION_DOWN -> { startX = p.x; startY = p.y; downX = e.rawX; downY = e.rawY; gesture.down(e.rawX, e.rawY) }
+                    MotionEvent.ACTION_DOWN -> { startX = p.x; startY = p.y; downX = e.rawX; downY = e.rawY; gesture.down(e.rawX, e.rawY, e.eventTime) }
                     MotionEvent.ACTION_MOVE -> gesture.move(e.rawX, e.rawY)
-                    MotionEvent.ACTION_UP, MotionEvent.ACTION_CANCEL -> gesture.up()
+                    MotionEvent.ACTION_UP, MotionEvent.ACTION_CANCEL -> gesture.up(e.eventTime)
                     else -> emptyList()
                 }
                 for (ev in events) when (ev) {
@@ -91,6 +91,7 @@ class MicBubbleService : AccessibilityService(), TextSink {
                         getSystemService(WindowManager::class.java).updateViewLayout(this, p)
                     }
                     "release" -> if (pressed) { pressed = false; pipeline.release() }
+                    "delete_last" -> pipeline.deleteLast()
                 }
                 true
             }

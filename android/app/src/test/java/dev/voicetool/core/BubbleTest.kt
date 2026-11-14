@@ -47,3 +47,32 @@ class BubbleGestureTest {
         assertEquals(listOf("press", "cancel", "drag", "drag", "dropped"),
             run("down" to 0f, "move" to 40f, "move" to 80f, "up" to 0f))
 }
+
+/** Double-tap the bubble = delete the last recording (the keyboard's "Delete last"). */
+class BubbleDoubleTapTest {
+    private fun tap(g: BubbleGesture, at: Long, holdMs: Long = 80) = g.down(0f, 0f, at) + g.up(at + holdMs)
+
+    @Test fun twoQuickTapsDeleteTheLastRecording() {
+        val g = BubbleGesture(slopPx = 30f)
+        tap(g, 0)
+        assertEquals(listOf("press", "release", "delete_last"), tap(g, 250))
+    }
+
+    @Test fun tapsFarApartDoNothingExtra() {
+        val g = BubbleGesture(slopPx = 30f)
+        tap(g, 0)
+        assertEquals(listOf("press", "release"), tap(g, 2000))
+    }
+
+    @Test fun aDictationThenATapIsNotADoubleTap() {
+        val g = BubbleGesture(slopPx = 30f)
+        tap(g, 0, holdMs = 3000)
+        assertEquals(listOf("press", "release"), tap(g, 3200))
+    }
+
+    @Test fun threeTapsDeleteOnlyOnce() {
+        val g = BubbleGesture(slopPx = 30f)
+        tap(g, 0); tap(g, 200)
+        assertEquals(listOf("press", "release"), tap(g, 400))
+    }
+}
