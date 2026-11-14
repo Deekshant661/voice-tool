@@ -13,11 +13,11 @@ import android.os.Looper
 import android.util.Log
 import android.view.Gravity
 import android.view.MotionEvent
+import android.view.View
 import android.view.WindowManager
 import android.view.accessibility.AccessibilityEvent
 import android.view.accessibility.AccessibilityNodeInfo
 import android.widget.TextView
-import android.widget.Toast
 import dev.voicetool.core.BubbleGesture
 import dev.voicetool.core.Field
 import dev.voicetool.core.Insertion
@@ -35,6 +35,9 @@ class MicBubbleService : AccessibilityService(), TextSink {
     private lateinit var pipeline: Pipeline
     private var bubble: TextView? = null
     private var params: WindowManager.LayoutParams? = null
+    private var label: TextView? = null
+    private var labelParams: WindowManager.LayoutParams? = null
+    private val hideLabel = Runnable { label?.visibility = View.GONE }
     private var target: AccessibilityNodeInfo? = null
     private var token = 0
     private var pressed = false
@@ -47,6 +50,7 @@ class MicBubbleService : AccessibilityService(), TextSink {
             { VoiceTool.settings(this) }, { msg -> main.post { toast(msg) } },
             { s -> main.post { setState(s) } }, worker)
         showBubble()
+        showLabel()
         main.postDelayed(tick, 30_000)
     }
 
@@ -56,8 +60,10 @@ class MicBubbleService : AccessibilityService(), TextSink {
 
     override fun onDestroy() {
         main.removeCallbacks(tick)
+        main.removeCallbacks(hideLabel)
         if (::pipeline.isInitialized) pipeline.cancel()
         bubble?.let { getSystemService(WindowManager::class.java).removeView(it) }
+        label?.let { getSystemService(WindowManager::class.java).removeView(it) }
         worker.shutdown()
         super.onDestroy()
     }
@@ -147,8 +153,36 @@ class MicBubbleService : AccessibilityService(), TextSink {
         bubble?.text = if (s == "working") "…" else "🎙"
     }
 
+    // Our own label under the bubble, not a Toast: some phones (OnePlus/ColorOS) hide toasts from
+    // apps that aren't on screen. Each message replaces the last, so a double-tap's
+    // "Tap a text box first" can't hide "Deleted last recording".
     private fun toast(msg: String) {
         Log.i("VoiceTool", msg)
-        Toast.makeText(this, msg, Toast.LENGTH_SHORT).show()
+        val l = label ?: return
+        val lp = labelParams ?: return
+        val p = params ?: return
+        lp.y = p.y + p.height + (8 * resources.displayMetrics.density).toInt()
+        getSystemService(WindowManager::class.java).updateViewLayout(l, lp)
+        l.text = msg
+        l.visibility = View.VISIBLE
+        main.removeCallbacks(hideLabel)
+        main.postDelayed(hideLabel, 2500)
+    }
+
+    private fun showLabel() {
+        val d = resources.displayMetrics.density
+        val lp = WindowManager.LayoutParams(WindowManager.LayoutParams.WRAP_CONTENT, WindowManager.LayoutParams.WRAP_CONTENT,
+            WindowManager.LayoutParams.TYPE_ACCESSIBILITY_OVERLAY,
+            WindowManager.LayoutParams.FLAG_NOT_FOCUSABLE or WindowManager.LayoutParams.FLAG_NOT_TOUCHABLE,
+            PixelFormat.TRANSLUCENT).apply { gravity = Gravity.TOP or Gravity.CENTER_HORIZONTAL }
+        val pad = (12 * d).toInt()
+        val l = TextView(this).apply {
+            setTextColor(Color.WHITE); textSize = 14f; setPadding(pad, pad / 2, pad, pad / 2)
+            background = GradientDrawable().apply { cornerRadius = 20 * d; setColor(Color.parseColor("#E6202020")) }
+            accessibilityLiveRegion = View.ACCESSIBILITY_LIVE_REGION_POLITE  // TalkBack still reads it, as it did the toast
+            visibility = View.GONE
+        }
+        getSystemService(WindowManager::class.java).addView(l, lp)
+        label = l; labelParams = lp
     }
 }

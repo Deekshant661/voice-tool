@@ -48,6 +48,7 @@ class Pipeline(
     @Volatile var lastText: String? = null
         private set
     private var lastSavedId: Long? = null  // worker thread only
+    private var lastDeleted = false  // worker thread only
     private var recording = false
     private var field = Field(true, true)
     private var token = 0
@@ -104,9 +105,10 @@ class Pipeline(
             // Only the recording this keyboard just saved; never an older, unrelated one.
             val id = lastSavedId
             notify(when {
+                id == null && lastDeleted -> "Already deleted"
                 id == null && lastText != null -> "The last dictation wasn't saved"
                 id == null -> "Nothing to delete"
-                store.delete(id) -> "Deleted last recording"
+                store.delete(id) -> { lastDeleted = true; "Deleted last recording" }
                 else -> "Nothing to delete"
             })
             lastSavedId = null
@@ -126,6 +128,7 @@ class Pipeline(
 
     private fun process(pcm: ShortArray, field: Field, token: Int, pkg: String, s: Settings) {
         val keep = field.save && s.saveRecordings
+        lastDeleted = false
         val floats = FloatArray(pcm.size) { pcm[it] / 32768f }
         val segments = try {
             models.use { it.transcribe(floats, Settings.prompt(s.vocabulary)) }

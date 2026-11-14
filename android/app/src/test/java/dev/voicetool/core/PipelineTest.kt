@@ -193,6 +193,16 @@ class PipelineTest {
         h.dictate()
         h.p.deleteLast(); h.p.deleteLast()
         assertEquals(listOf(1L), h.store.deleted)
+        assertEquals(listOf("Deleted last recording", "Already deleted"), h.notes)
+    }
+
+    @Test fun deleteLastWorksAgainAfterTheNextDictation() {
+        val h = Harness()
+        h.dictate()
+        h.p.deleteLast()
+        h.dictate()
+        h.p.deleteLast()
+        assertEquals(listOf("Deleted last recording", "Deleted last recording"), h.notes)
     }
 
     @Test fun confidentSpeechIsKeptEvenWhenNoSpeechIsHigh() {
