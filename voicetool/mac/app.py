@@ -113,7 +113,8 @@ def main() -> None:
     from voicetool.mac.transcriber import load_model, release, transcribe
     from voicetool.model_manager import ModelManager
     from voicetool.pipeline import Pipeline
-    from voicetool.recorder import Recorder, RecorderError, find_input_device
+    from voicetool.recorder import RecorderError, find_input_device
+    from voicetool.mac.recorder import MacRecorder
     from voicetool.store import Store
 
     setup_log(LOG_PATH)
@@ -143,7 +144,7 @@ def main() -> None:
         "data": lambda: holder["app"].open_data(),
         "quit": lambda: holder["app"].quit(),
     })
-    pipeline = Pipeline(cfg, Recorder(device=device), models, store, paste.deliver,
+    pipeline = Pipeline(cfg, MacRecorder(device=device), models, store, paste.deliver,
                         paste.foreground, transcribe, bar.notify, beep, bar.set_state,
                         notices=paste.MAC_NOTICES)
     launcher = CorrectionsLauncher()
