@@ -1,0 +1,218 @@
+package dev.voicetool
+
+import android.Manifest
+import android.app.Activity
+import android.app.AlertDialog
+import android.content.Context
+import android.content.Intent
+import android.content.pm.PackageManager
+import android.media.MediaPlayer
+import android.os.Bundle
+import android.provider.Settings as AndroidSettings
+import android.view.WindowInsets
+import android.view.inputmethod.InputMethodManager
+import android.widget.ArrayAdapter
+import android.widget.Button
+import android.widget.CheckBox
+import android.widget.EditText
+import android.widget.LinearLayout
+import android.widget.ListView
+import android.widget.RadioButton
+import android.widget.RadioGroup
+import android.widget.ScrollView
+import android.widget.TextView
+import android.widget.Toast
+import dev.voicetool.core.Settings
+
+private fun Context.column(vararg views: android.view.View) = LinearLayout(this).apply {
+    orientation = LinearLayout.VERTICAL
+    views.forEach { addView(it) }
+}
+
+/** Android 15+ draws the app behind the status and navigation bars: keep content out from under
+ *  them (and the camera cutout), plus our own margin. */
+private fun Activity.show(content: android.view.View) {
+    content.setOnApplyWindowInsetsListener { v, insets ->
+        val bars = insets.getInsets(WindowInsets.Type.systemBars() or WindowInsets.Type.displayCutout())
+        v.setPadding(bars.left + 40, bars.top + 24, bars.right + 40, bars.bottom + 24)
+        insets
+    }
+    setContentView(content)
+}
+
+private fun Context.label(text: String, size: Float = 16f) =
+    TextView(this).apply { this.text = text; textSize = size; setPadding(0, 16, 0, 8) }
+
+private fun Context.button(text: String, action: () -> Unit) =
+    Button(this).apply { this.text = text; isAllCaps = false; setOnClickListener { action() } }
+
+/** First screen: everything the keyboard needs, with the fix for anything missing. */
+class SetupActivity : Activity() {
+    private lateinit var status: TextView
+
+    override fun onCreate(savedInstanceState: Bundle?) {
+        super.onCreate(savedInstanceState)
+        status = label("", 17f)
+        show(ScrollView(this).apply {
+            addView(column(
+                label("Voice Tool", 26f), status,
+                button("Allow the microphone") { requestPermissions(arrayOf(Manifest.permission.RECORD_AUDIO), 1) },
+                button("Turn on the mic bubble (Accessibility → Voice Tool mic bubble)") {
+                    startActivity(Intent(AndroidSettings.ACTION_ACCESSIBILITY_SETTINGS))
+                },
+                button("Keep the bubble alive (Battery → Don't optimise)") {
+                    startActivity(Intent(AndroidSettings.ACTION_IGNORE_BATTERY_OPTIMIZATION_SETTINGS))
+                },
+                button("Turn on the Voice Tool keyboard") { startActivity(Intent(AndroidSettings.ACTION_INPUT_METHOD_SETTINGS)) },
+                button("Switch keyboard now") { getSystemService(InputMethodManager::class.java).showInputMethodPicker() },
+                button("Recent dictations") { startActivity(Intent(this@SetupActivity, RecentActivity::class.java)) },
+                button("Settings") { startActivity(Intent(this@SetupActivity, SettingsActivity::class.java)) },
+                button("Export recordings (zip; keep it before any uninstall)") {
+                    startActivityForResult(Intent(Intent.ACTION_CREATE_DOCUMENT).addCategory(Intent.CATEGORY_OPENABLE)
+                        .setType("application/zip")
+                        .putExtra(Intent.EXTRA_TITLE, "voice-tool-export-${java.time.LocalDate.now()}.zip"), EXPORT)
+                },
+            ))
+        })
+    }
+
+    override fun onResume() { super.onResume(); refresh() }
+
+    @Deprecated("Fine for one plain file picker")
+    override fun onActivityResult(code: Int, result: Int, data: Intent?) {
+        super.onActivityResult(code, result, data)
+        val uri = data?.data
+        if (code != EXPORT || result != RESULT_OK || uri == null) return
+        Toast.makeText(this, "Exporting…", Toast.LENGTH_SHORT).show()
+        Thread {
+            val msg = try {
+                val store = VoiceTool.store(this)
+                val rows = store.recent(Int.MAX_VALUE).map { it.toRow() }
+                val n = contentResolver.openOutputStream(uri)!!.use { out ->
+                    dev.voicetool.core.Export.write(out, rows, store::audioFile)
+                }
+                "Exported $n recordings"
+            } catch (e: Exception) { "Export failed: ${e.message}" }
+            runOnUiThread { Toast.makeText(this, msg, Toast.LENGTH_LONG).show() }
+        }.start()
+    }
+
+    override fun onRequestPermissionsResult(code: Int, perms: Array<out String>, results: IntArray) {
+        super.onRequestPermissionsResult(code, perms, results)
+        refresh()
+    }
+
+    private companion object { const val EXPORT = 7 }
+
+    private fun refresh() {
+        val mic = checkSelfPermission(Manifest.permission.RECORD_AUDIO) == PackageManager.PERMISSION_GRANTED
+        val enabled = getSystemService(InputMethodManager::class.java).enabledInputMethodList
+            .any { it.packageName == packageName }
+        val bubble = (AndroidSettings.Secure.getString(contentResolver,
+            AndroidSettings.Secure.ENABLED_ACCESSIBILITY_SERVICES) ?: "").contains("$packageName/")
+        val model = VoiceTool.settings(this).model
+        val have = Models.NAMES.filter { Models.file(this, it).exists() }
+        val store = VoiceTool.store(this)
+        status.text = buildString {
+            appendLine((if (mic) "✓" else "✗") + " Microphone " + if (mic) "allowed" else "not allowed")
+            appendLine((if (bubble) "✓" else "✗") + " Mic bubble " + if (bubble) "on" else "off")
+            appendLine((if (enabled) "✓" else "✗") + " Keyboard " + if (enabled) "turned on (optional)" else "off (optional)")
+            appendLine((if (model in have) "✓" else "✗") + " Model $model " + if (model in have) "ready" else "missing")
+            if (model !in have) appendLine("   Copy it from the Mac:\n   adb push ggml-$model-q5_1.bin ${Models.dir(this@SetupActivity)}/")
+            appendLine("Recordings: %.1f MB".format(store.totalBytes() / 1e6))
+            if (VoiceTool.lowOnSpace(this@SetupActivity)) appendLine("⚠ Phone storage is almost full")
+            append("Uninstalling this app deletes its recordings.")
+        }
+    }
+}
+
+/** Fix words Whisper misheard; corrected entries are the valuable training data. */
+class RecentActivity : Activity() {
+    private var player: MediaPlayer? = null
+    private lateinit var list: ListView
+    private var rows: List<Dictation> = emptyList()
+
+    override fun onCreate(savedInstanceState: Bundle?) {
+        super.onCreate(savedInstanceState)
+        list = ListView(this).apply {
+            layoutParams = LinearLayout.LayoutParams(LinearLayout.LayoutParams.MATCH_PARENT, 0, 1f)  // fill below the header
+        }
+        show(column(label("Recent dictations", 24f), label("Tap one to fix words Whisper misheard. Don't reword."), list))
+        list.setOnItemClickListener { _, _, i, _ -> edit(rows[i]) }
+        refresh()
+    }
+
+    override fun onDestroy() { player?.release(); super.onDestroy() }
+
+    private fun refresh() {
+        rows = VoiceTool.store(this).recent(30)
+        list.adapter = ArrayAdapter(this, android.R.layout.simple_list_item_1, rows.map {
+            val mark = if (it.correctedText != null) "✓ " else ""
+            "${it.createdAt.replace('T', ' ')}  $mark${(it.correctedText ?: it.rawText).take(70)}"
+        })
+    }
+
+    private fun edit(d: Dictation) {
+        // Raw text, not cleaned: training data should stay word-for-word.
+        val box = EditText(this).apply { setText(d.correctedText ?: d.rawText) }
+        val dialog = AlertDialog.Builder(this).setTitle("What you really said").setView(box)
+            .setPositiveButton("Save") { _, _ -> VoiceTool.store(this).setCorrection(d.id, box.text.toString().trim()); refresh() }
+            .setNeutralButton("Play", null)  // wired below so it doesn't close the dialog
+            .setNegativeButton("Delete") { _, _ ->
+                AlertDialog.Builder(this).setMessage("Delete this recording?")
+                    .setPositiveButton("Delete") { _, _ -> VoiceTool.store(this).delete(d.id); refresh() }
+                    .setNegativeButton("Keep", null).show()
+            }.create()
+        dialog.setOnShowListener {
+            dialog.getButton(AlertDialog.BUTTON_NEUTRAL).setOnClickListener { play(d) }
+        }
+        dialog.show()
+    }
+
+    private fun play(d: Dictation) {
+        player?.release()
+        player = null
+        val file = VoiceTool.store(this).audioFile(d)
+        try {
+            player = MediaPlayer().apply {
+                setDataSource(file.absolutePath)
+                setOnCompletionListener { it.release(); if (player === it) player = null }
+                prepare(); start()
+            }
+        } catch (e: Exception) {
+            Toast.makeText(this, "Can't play this recording: ${e.message}", Toast.LENGTH_LONG).show()
+        }
+    }
+}
+
+class SettingsActivity : Activity() {
+    override fun onCreate(savedInstanceState: Bundle?) {
+        super.onCreate(savedInstanceState)
+        val vocab = EditText(this).apply { setText(VoiceTool.rawSetting(this@SettingsActivity, "vocabulary", Settings.DEFAULT_VOCABULARY)) }
+        val repl = EditText(this).apply {
+            setText(VoiceTool.rawSetting(this@SettingsActivity, "replacements", Settings.DEFAULT_REPLACEMENTS)); minLines = 3
+        }
+        val current = VoiceTool.settings(this)
+        val models = RadioGroup(this)
+        Models.NAMES.forEach { name ->
+            models.addView(RadioButton(this).apply {
+                text = if (name == "small.en") "small.en (most accurate, ~5 s)" else "base.en (faster, ~2 s, more mistakes)"
+                id = name.hashCode(); isChecked = name == current.model
+            })
+        }
+        val save = CheckBox(this).apply { text = "Save recordings (training data)"; isChecked = current.saveRecordings }
+        show(ScrollView(this).apply {
+            addView(column(
+                label("Settings", 24f),
+                label("Words Whisper should spell your way (comma separated)"), vocab,
+                label("Replacements, one per line: what Whisper writes = what you want"), repl,
+                label("Model (applies the next time the keyboard opens)"), models, save,
+                button("Save") {
+                    val model = Models.NAMES.firstOrNull { it.hashCode() == models.checkedRadioButtonId } ?: "small.en"
+                    VoiceTool.saveSettings(this@SettingsActivity, vocab.text.toString(), repl.text.toString(), model, save.isChecked)
+                    finish()
+                },
+            ))
+        })
+    }
+}

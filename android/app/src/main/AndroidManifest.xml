@@ -1,0 +1,26 @@
+<manifest xmlns:android="http://schemas.android.com/apk/res/android">
+    <!-- The only permission. No INTERNET: audio and text cannot leave the phone. -->
+    <uses-permission android:name="android.permission.RECORD_AUDIO" />
+    <application android:label="Voice Tool" android:allowBackup="false"
+        android:dataExtractionRules="@xml/no_data_extraction"
+        android:theme="@android:style/Theme.DeviceDefault.NoActionBar">
+        <activity android:name=".SetupActivity" android:exported="true">
+            <intent-filter>
+                <action android:name="android.intent.action.MAIN" />
+                <category android:name="android.intent.category.LAUNCHER" />
+            </intent-filter>
+        </activity>
+        <activity android:name=".RecentActivity" android:exported="false" />
+        <activity android:name=".SettingsActivity" android:exported="false" />
+        <service android:name=".VoiceKeyboard" android:label="Voice Tool"
+            android:exported="true" android:permission="android.permission.BIND_INPUT_METHOD">
+            <intent-filter><action android:name="android.view.InputMethod" /></intent-filter>
+            <meta-data android:name="android.view.im" android:resource="@xml/method" />
+        </service>
+        <service android:name=".MicBubbleService" android:label="Voice Tool mic bubble"
+            android:exported="true" android:permission="android.permission.BIND_ACCESSIBILITY_SERVICE">
+            <intent-filter><action android:name="android.accessibilityservice.AccessibilityService" /></intent-filter>
+            <meta-data android:name="android.accessibilityservice" android:resource="@xml/mic_bubble" />
+        </service>
+    </application>
+</manifest>
